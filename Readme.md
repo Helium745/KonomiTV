@@ -5,12 +5,16 @@
 
 ## このフォークの説明
 
-このフォークは、開発が停滞している[EPGStation](https://github.com/l3tnun/EPGStation)の後継となるようなものをイメージして作成しています。  
+このフォークは、開発が停滞している [EPGStation](https://github.com/l3tnun/EPGStation) の後継となるようなものをイメージして作成しています。  
 完全に製作者の好みに合わせた破壊的変更が多くなるでしょう。
 
 具体的には、以下の変更を行っています。
-- サーバー
-  - プロジェクト管理をPoetryからuvに移行
+- サーバーのプロジェクト管理を Poetry から uv に移行
+
+また、以下の変更を予定しています。
+- バックエンドを Mirakurun / mirakc のみに変更
+- クライアントのプレイヤーを [Video.js](https://github.com/videojs/video.js) に変更
+- クライアントのコメント描画を [niconicomments](https://github.com/xpadev-net/niconicomments) に変更
 
 ## オリジナルの説明
 
