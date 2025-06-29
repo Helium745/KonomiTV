@@ -159,3 +159,7 @@ server/thirdparty/*
 
 # ignore .gitkeep
 !.gitkeep
+
+# dev files
+docker-compose.dev.yaml
+dev.Dockerfile
