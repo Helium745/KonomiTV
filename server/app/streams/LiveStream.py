@@ -14,7 +14,6 @@ from app.constants import QUALITY_TYPES
 from app.schemas import LiveStreamStatus
 from app.streams.LiveEncodingTask import LiveEncodingTask
 from app.streams.LivePSIDataArchiver import LivePSIDataArchiver
-from app.utils.edcb.EDCBTuner import EDCBTuner
 
 
 class LiveStreamClient:
@@ -188,7 +187,7 @@ class LiveStream:
         self._stream_data_written_at: float
         self._live_encoding_task_ref: asyncio.Task[None] | None
         self.psi_data_archiver: LivePSIDataArchiver | None
-        self.tuner: EDCBTuner | None
+        self.tuner: None
 
 
     @classmethod
@@ -295,10 +294,6 @@ class LiveStream:
                 idling_live_streams = self.getIdlingLiveStreams()
                 if len(idling_live_streams) > 0:
                     idling_live_stream: LiveStream = idling_live_streams[0]
-
-                    # EDCB バックエンドの場合はチューナーをアンロックし、これから開始するエンコードタスクで再利用できるようにする
-                    if idling_live_stream.tuner is not None:
-                        idling_live_stream.tuner.unlock()
 
                     # チューナーリソースを解放する
                     idling_live_stream.setStatus('Offline', '新しいライブストリームが開始されたため、チューナーリソースを解放しました。')
@@ -434,17 +429,6 @@ class LiveStream:
 
         # 最終更新のタイムスタンプを更新
         self._updated_at = time.time()
-
-        # チューナーインスタンスが存在する場合 (= EDCB バックエンド利用時) のみ
-        if self.tuner is not None:
-
-            # Idling への切り替え時、チューナーをアンロックして再利用できるように
-            if self._status == 'Idling':
-                self.tuner.unlock()
-
-            # ONAir への切り替え（復帰）時、再びチューナーをロックして制御を横取りされないように
-            if self._status == 'ONAir':
-                self.tuner.lock()
 
         return True
 

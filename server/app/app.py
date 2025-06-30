@@ -43,7 +43,6 @@ from app.routers import (
     VideoStreamsRouter,
 )
 from app.streams.LiveStream import LiveStream
-from app.utils.edcb.EDCBTuner import EDCBTuner
 
 
 # もし Config() の実行時に AssertionError が発生した場合は、LoadConfig() を実行してサーバー設定データをロードする
@@ -245,10 +244,6 @@ async def Shutdown():
     # 全てのライブストリームを終了する
     for live_stream in LiveStream.getAllLiveStreams():
         live_stream.setStatus('Offline', 'ライブストリームは Offline です。', True)
-
-    # 全てのチューナーインスタンスを終了する (EDCB バックエンドのみ)
-    if CONFIG.general.backend == 'EDCB':
-        await EDCBTuner.closeAll()
 
     # 録画フォルダ監視タスクを停止
     global recorded_scan_task

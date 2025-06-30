@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
-import gc
 import json
 import time
 from datetime import datetime, timedelta
@@ -24,8 +23,6 @@ from app.constants import DATABASE_CONFIG, HTTPX_CLIENT
 from app.models.Channel import Channel
 from app.schemas import Genre
 from app.utils import GetMirakurunAPIEndpointURL
-from app.utils.edcb.CtrlCmdUtil import CtrlCmdUtil
-from app.utils.edcb.EDCBUtil import EDCBUtil
 from app.utils.TSInformation import TSInformation
 
 
@@ -86,13 +83,8 @@ class Program(TortoiseModel):
             try:
                 with concurrent.futures.ProcessPoolExecutor(max_workers=1) as executor:
 
-                    # Mirakurun バックエンド
-                    if Config().general.backend == 'Mirakurun':
-                        await loop.run_in_executor(executor, cls.updateFromMirakurunForMultiProcess)
-
-                    # EDCB バックエンド
-                    elif Config().general.backend == 'EDCB':
-                        await loop.run_in_executor(executor, cls.updateFromEDCBForMultiProcess)
+                    # Mirakurun から番組情報を取得する
+                    await loop.run_in_executor(executor, cls.updateProgramInfoForMultiProcess)
 
             # データベースが他のプロセスにロックされていた場合
             # 5秒待ってからリトライ
@@ -104,13 +96,8 @@ class Program(TortoiseModel):
         # 番組情報をシングルプロセスで更新する
         else:
             try:
-                # Mirakurun バックエンド
-                if Config().general.backend == 'Mirakurun':
-                    await cls.updateFromMirakurun()
-
-                # EDCB バックエンド
-                elif Config().general.backend == 'EDCB':
-                    await cls.updateFromEDCB()
+                # Mirakurun から番組情報を取得する
+                await cls.updateProgramInfo()
             except Exception as ex:
                 logging.error('Failed to update programs:', exc_info=ex)
 
@@ -118,7 +105,7 @@ class Program(TortoiseModel):
 
 
     @classmethod
-    async def updateFromMirakurun(cls, is_running_multiprocess: bool = False) -> None:
+    async def updateProgramInfo(cls, is_running_multiprocess: bool = False) -> None:
         """
         Mirakurun バックエンドから番組情報を取得し、更新する
 
@@ -467,295 +454,7 @@ class Program(TortoiseModel):
 
 
     @classmethod
-    async def updateFromEDCB(cls, is_running_multiprocess: bool = False) -> None:
-        """
-        EDCB バックエンドから番組情報を取得し、更新する
-
-        Args:
-            is_running_multiprocess (bool, optional): マルチプロセスで実行されているかどうか
-        """
-
-        # マルチプロセス時は既存のコネクションが使えないため、Tortoise ORM を初期化し直す
-        # ref: https://tortoise-orm.readthedocs.io/en/latest/setup.html
-        if is_running_multiprocess is True:
-
-            # Tortoise ORM を再初期化する前に、既存のコネクションを破棄
-            ## これをやっておかないとなぜか正常に初期化できず、DB 操作でフリーズする…
-            ## Windows だとこれをやらなくても問題ないが、Linux だと必要 (Tortoise ORM あるいは aiosqlite のマルチプロセス時のバグ？)
-            connections.discard('default')
-
-            # Tortoise ORM を再初期化
-            await Tortoise.init(config=DATABASE_CONFIG)
-
-        try:
-
-            # このトランザクションはパフォーマンス向上と、取得失敗時のロールバックのためのもの
-            async with transactions.in_transaction():
-
-                # CtrlCmdUtil を初期化
-                edcb = CtrlCmdUtil()
-                edcb.setConnectTimeOutSec(10)  # 10秒後にタイムアウト (SPHD や CATV も映る環境だと時間がかかるので、少し伸ばす)
-
-                # 開始時間未定をのぞく全番組を取得する (リスト引数の前2要素は全番組、残り2要素は全期間を意味)
-                service_event_info_list = await edcb.sendEnumPgInfoEx([0xffffffffffff, 0xffffffffffff, 1, 0x7fffffffffffffff])
-                if service_event_info_list is None:
-                    logging.error('Failed to get programs from EDCB.')
-                    raise Exception('Failed to get programs from EDCB.')
-
-                # この変数から更新or更新不要な番組情報を削除していき、残った古い番組情報を最後にまとめて削除する
-                duplicate_programs = {temp.id:temp for temp in await Program.all()}
-
-                # チャンネルごとに
-                for service_event_info in service_event_info_list:
-
-                    # NID・SID・TSID を取得
-                    nid = int(service_event_info['service_info']['onid'])
-                    sid = int(service_event_info['service_info']['sid'])
-                    tsid = int(service_event_info['service_info']['tsid'])
-
-                    # チャンネル情報を取得
-                    ## TSID まで指定することで、NID-SID が同じだが TSID が異なる番組情報が複数降ってきた場合
-                    ## (BS トランスポンダ再編時など) に同一チャンネルの重複追加を回避できる
-                    ## EDCB バックエンド利用時、Channel レコードには必ず TSID が設定されている (Mirakurun バックエンド利用時は常に null)
-                    channel = await Channel.filter(network_id=nid, service_id=sid, transport_stream_id=tsid).first()
-                    if channel is None:  # 登録されていないチャンネルの番組を弾く（ワンセグやデータ放送など）
-                        continue
-
-                    # 番組情報ごとに
-                    for event_info in service_event_info['event_list']:
-
-                        # メインの番組でないなら弾く
-                        group_info = event_info.get('event_group_info')
-                        if (group_info is not None and len(group_info['event_data_list']) == 1 and
-                        (group_info['event_data_list'][0]['onid'] != nid or
-                            group_info['event_data_list'][0]['tsid'] != tsid or
-                            group_info['event_data_list'][0]['sid'] != sid or
-                            group_info['event_data_list'][0]['eid'] != event_info['eid'])):
-                            continue
-
-                        # 重複する番組情報が登録されているかの判定に使うため、ここで先に番組情報を取得する
-
-                        # 番組タイトル・番組概要
-                        title: str = ''  # デフォルト値
-                        description: str = ''  # デフォルト値
-                        if 'short_info' in event_info:
-                            title = TSInformation.formatString(event_info['short_info']['event_name']).strip()
-                            description = TSInformation.formatString(event_info['short_info']['text_char']).strip()
-
-                        # 番組詳細
-                        detail: dict[str, str] = {}  # デフォルト値
-                        if 'ext_info' in event_info:
-
-                            # 番組詳細テキストから取得した、見出しと本文の辞書ごとに
-                            for head, text in EDCBUtil.parseProgramExtendedText(event_info['ext_info']['text_char']).items():
-
-                                # 見出しと本文
-                                ## 見出しのみ ariblib 側で意図的に重複防止のためのタブ文字付加が行われる場合があるため、
-                                ## strip() では明示的に半角スペースと改行のみを指定している
-                                head_hankaku = TSInformation.formatString(head).replace('◇', '').strip(' \r\n')  # ◇ を取り除く
-                                ## ないとは思うが、万が一この状態で見出しが衝突しうる場合は、見出しの後ろにタブ文字を付加する
-                                while head_hankaku in detail.keys():
-                                    head_hankaku += '\t'
-                                ## 見出しが空の場合、固定で「番組内容」としておく
-                                if head_hankaku == '':
-                                    head_hankaku = '番組内容'
-                                text_hankaku = TSInformation.formatString(text).strip()
-                                detail[head_hankaku] = text_hankaku
-
-                                # 番組概要が空の場合、番組詳細の最初の本文を概要として使う
-                                # 空でまったく情報がないよりかは良いはず
-                                if description.strip() == '':
-                                    description = text_hankaku
-
-                        # 番組開始時刻
-                        ## 万が一取得できなかった場合は 1970/1/1 9:00 とする
-                        start_time = event_info.get('start_time', datetime(1970, 1, 1, 9, tzinfo=ZoneInfo('Asia/Tokyo')))
-
-                        # 番組終了時刻
-                        ## 終了時間未定の場合、とりあえず5分とする
-                        end_time = start_time + timedelta(seconds=event_info.get('duration_sec', 300))
-
-                        # 番組終了時刻が現在時刻より1時間以上前な番組を弾く
-                        if datetime.now(CtrlCmdUtil.TZ) - end_time > timedelta(hours=1):
-                            continue
-
-                        # ***** ここからは 追加・更新・更新不要 のいずれか *****
-
-                        # DB は読み取りよりも書き込みの方が負荷と時間がかかるため、不要な書き込みは極力避ける
-
-                        # 番組 ID
-                        program_id = f'NID{nid}-SID{sid:03d}-EID{event_info["eid"]}'
-
-                        # 重複する番組 ID の番組情報があれば取得する
-                        duplicate_program = duplicate_programs.get(program_id)
-
-                        # 重複する番組情報があり、かつタイトル・番組概要・番組詳細・番組開始時刻・番組終了時刻が全て同じ
-                        if (duplicate_program is not None and
-                            duplicate_program.title == title and
-                            duplicate_program.description == description and
-                            len(duplicate_program.detail) == len(detail) and
-                            duplicate_program.start_time == start_time and
-                            duplicate_program.end_time == end_time):
-
-                            # 更新不要なのでスキップ
-                            del duplicate_programs[program_id]
-                            continue
-
-                        # 重複する番組情報が存在しない（追加）
-                        if duplicate_program is None:
-                            program = Program()
-
-                        # 重複する番組情報が存在する（更新）
-                        else:
-                            del duplicate_programs[program_id]  # 参照を削除
-                            program = duplicate_program
-
-                        # 取得してきた値を設定
-                        program.id = program_id
-                        program.channel_id = channel.id
-                        program.network_id = channel.network_id
-                        program.service_id = channel.service_id
-                        program.event_id = int(event_info['eid'])
-                        program.title = title
-                        program.description = description
-                        program.detail = detail
-                        program.start_time = start_time
-                        program.end_time = end_time
-                        program.duration = (program.end_time - program.start_time).total_seconds()
-                        program.is_free = bool(event_info['free_ca_flag'] == 0)  # free_ca_flag が 0 であれば無料放送
-
-                        # ジャンル
-                        ## 数字だけでは開発中の視認性が低いのでテキストに変換する
-                        program.genres = []  # デフォルト値
-                        content_info = event_info.get('content_info')
-                        if content_info is not None:
-                            for content_data in content_info['nibble_list']:  # ジャンルごとに
-
-                                # 大まかなジャンルを取得
-                                genre_tuple = ariblib.constants.CONTENT_TYPE.get(content_data['content_nibble'] >> 8)
-                                if genre_tuple is not None:
-
-                                    # major … 大分類
-                                    # middle … 中分類
-                                    genre_dict: Genre = {
-                                        'major': genre_tuple[0].replace('／', '・'),
-                                        'middle': genre_tuple[1].get(content_data['content_nibble'] & 0xf, '未定義').replace('／', '・'),
-                                    }
-
-                                    # BS/地上デジタル放送用番組付属情報がジャンルに含まれている場合、user_nibble から値を取得して書き換える
-                                    # たとえば「中止の可能性あり」や「延長の可能性あり」といった情報が取れる
-                                    if genre_dict['major'] == '拡張':
-                                        if genre_dict['middle'] == 'BS/地上デジタル放送用番組付属情報':
-                                            user_nibble = (content_data['user_nibble'] >> 8 << 4) | (content_data['user_nibble'] & 0xf)
-                                            genre_dict['middle'] = ariblib.constants.USER_TYPE.get(user_nibble, '未定義')
-                                        # 「拡張」はあるがBS/地上デジタル放送用番組付属情報でない場合はなんの値なのかわからないのでパス
-                                        else:
-                                            continue
-
-                                    # ジャンルを追加
-                                    program.genres.append(genre_dict)
-
-                        # 映像情報
-                        ## テキストにするために ariblib.constants や TSInformation の値を使う
-                        program.video_type = None
-                        program.video_codec = None
-                        program.video_resolution = None
-                        component_info = event_info.get('component_info')
-                        if component_info is not None:
-                            ## 映像の種類
-                            component_types = ariblib.constants.COMPONENT_TYPE.get(component_info['stream_content'])
-                            if component_types is not None:
-                                program.video_type = component_types.get(component_info['component_type'])
-                            ## 映像のコーデック
-                            program.video_codec = TSInformation.STREAM_CONTENT.get(component_info['stream_content'])
-                            ## 映像の解像度
-                            program.video_resolution = TSInformation.COMPONENT_TYPE.get(component_info['component_type'])
-
-                        # 音声情報
-                        program.primary_audio_type = ''
-                        program.primary_audio_language = ''
-                        program.primary_audio_sampling_rate = ''
-                        program.secondary_audio_type = None
-                        program.secondary_audio_language = None
-                        program.secondary_audio_sampling_rate = None
-                        audio_info = event_info.get('audio_info')
-                        if audio_info is not None and len(audio_info['component_list']) > 0:
-
-                            ## 主音声
-                            audio_component_info = audio_info['component_list'][0]
-                            program.primary_audio_type = ariblib.constants.COMPONENT_TYPE[0x02].get(audio_component_info['component_type'], 'Unknown')
-                            program.primary_audio_sampling_rate = ariblib.constants.SAMPLING_RATE.get(audio_component_info['sampling_rate'], 'Unknown')
-                            ## 2021/09 現在の EDCB では言語コードが取得できないため、日本語か英語で固定する
-                            ## EpgDataCap3 のパーサー止まりで EDCB 側では取得していないらしい
-                            program.primary_audio_language = '日本語'
-                            ## デュアルモノのみ
-                            if program.primary_audio_type == '1/0+1/0モード(デュアルモノ)':
-                                if audio_component_info['es_multi_lingual_flag'] != 0:  # デュアルモノ時の多言語フラグ
-                                    program.primary_audio_language += '+英語'
-                                else:
-                                    program.primary_audio_language += '+副音声'
-
-                            # 副音声（存在する場合）
-                            if len(audio_info['component_list']) > 1:
-                                audio_component_info = audio_info['component_list'][1]
-                                program.secondary_audio_type = ariblib.constants.COMPONENT_TYPE[0x02].get(audio_component_info['component_type'], 'Unknown')
-                                program.secondary_audio_sampling_rate = ariblib.constants.SAMPLING_RATE.get(audio_component_info['sampling_rate'], 'Unknown')
-                                ## 2021/09 現在の EDCB では言語コードが取得できないため、副音声で固定する
-                                ## 英語かもしれないし解説かもしれない
-                                program.secondary_audio_language = '副音声'
-                                ## デュアルモノのみ
-                                if program.secondary_audio_type == '1/0+1/0モード(デュアルモノ)':
-                                    if audio_component_info['es_multi_lingual_flag'] != 0:  # デュアルモノ時の多言語フラグ
-                                        program.secondary_audio_language += '+英語'
-                                    else:
-                                        program.secondary_audio_language += '+副音声'
-
-                        # 番組情報をデータベースに保存する
-                        if duplicate_program is None:
-                            logging.debug_simple(f'Add Program: {program.id}')
-                        else:
-                            logging.debug_simple(f'Update Program: {program.id}')
-
-                        ## マルチプロセス実行時は、まれに保存する際にメインプロセスにデータベースがロックされている事がある
-                        ## 3秒待ってから再試行し、それでも失敗した場合はスキップ
-                        try:
-                            await program.save()
-                        except exceptions.OperationalError:
-                            try:
-                                await asyncio.sleep(3)
-                                await program.save()
-                            except exceptions.OperationalError:
-                                pass
-
-                # この時点で残存している番組情報は放送が終わって EPG から削除された番組なので、まとめて削除する
-                # ここで削除しないと終了した番組の情報が幽霊のように残り続ける事になり、結果 DB が肥大化して遅くなってしまう
-                for duplicate_program in duplicate_programs.values():
-                    logging.debug_simple(f'Delete Program: {duplicate_program.id}')
-                    try:
-                        await duplicate_program.delete()
-                    except exceptions.OperationalError:
-                        try:
-                            await asyncio.sleep(3)
-                            await duplicate_program.delete()
-                        except exceptions.OperationalError:
-                            pass
-
-        # マルチプロセス実行時は、明示的に例外を拾わないとなぜかメインプロセスも含め全体がフリーズしてしまう
-        except Exception as ex:
-            logging.error('Failed to update programs from EDCB:', exc_info=ex)
-
-        # マルチプロセス実行時は、開いた Tortoise ORM のコネクションを明示的に閉じる
-        # コネクションを閉じないと Ctrl+C を押下しても終了できない
-        finally:
-            if is_running_multiprocess:
-                await connections.close_all()
-
-        # 強制的にガベージコレクションを実行する
-        gc.collect()
-
-
-    @classmethod
-    def updateFromMirakurunForMultiProcess(cls) -> None:
+    def updateProgramInfoForMultiProcess(cls) -> None:
         """
         Program.updateFromMirakurun() の同期版 (ProcessPoolExecutor でのマルチプロセス実行用)
         """
@@ -770,26 +469,7 @@ class Program(TortoiseModel):
             LoadConfig(bypass_validation=True)
 
         # asyncio.run() で非同期メソッドの実行が終わるまで待つ
-        asyncio.run(cls.updateFromMirakurun(is_running_multiprocess=True))
-
-
-    @classmethod
-    def updateFromEDCBForMultiProcess(cls) -> None:
-        """
-        Program.updateFromEDCB() の同期版 (ProcessPoolExecutor でのマルチプロセス実行用)
-        """
-
-        # もし Config() の実行時に AssertionError が発生した場合は、LoadConfig() を実行してサーバー設定データをロードする
-        ## 通常ならマルチプロセス実行時もサーバー設定データがロードされているはずだが、
-        ## 自動リロードモード時のみなぜかグローバル変数がマルチプロセスに引き継がれないため、明示的にロードさせる必要がある
-        try:
-            Config()
-        except AssertionError:
-            # バリデーションは既にサーバー起動時に行われているためスキップする
-            LoadConfig(bypass_validation=True)
-
-        # asyncio.run() で非同期メソッドの実行が終わるまで待つ
-        asyncio.run(cls.updateFromEDCB(is_running_multiprocess=True))
+        asyncio.run(cls.updateProgramInfo(is_running_multiprocess=True))
 
 
     def isOffTheAirProgram(self) -> bool:

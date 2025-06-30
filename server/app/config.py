@@ -1,6 +1,4 @@
 
-import asyncio
-import concurrent.futures
 import platform
 import re
 import subprocess
@@ -103,7 +101,7 @@ class ClientSettings(BaseModel):
 # config.yaml のバリデーションは設定データをこの Pydantic モデルに通すことで行う
 
 class _ServerSettingsGeneral(BaseModel):
-    backend: Literal['EDCB', 'Mirakurun'] = 'EDCB'
+    backend: Literal['EDCB', 'Mirakurun'] = 'Mirakurun'
     always_receive_tv_from_mirakurun: bool = False
     edcb_url: Annotated[Url, UrlConstraints(allowed_schemes=['tcp'])] = Url('tcp://127.0.0.1:4510/')
     mirakurun_url: Annotated[Url, UrlConstraints(allowed_schemes=['http', 'https'])] = Url('http://127.0.0.1:40772/')
@@ -112,39 +110,11 @@ class _ServerSettingsGeneral(BaseModel):
     debug: bool = False
     debug_encoder: bool = False
 
+    # EDCB の URL のバリデーション
+    # 互換性のためだけのものなのでそのうち消す
     @field_validator('edcb_url')
     def validate_edcb_url(cls, edcb_url: Url, info: ValidationInfo) -> Url:
-        # URL を末尾のスラッシュありに統一
         edcb_url = Url(str(edcb_url).rstrip('/') + '/')
-        # バリデーションをスキップする場合はここで終了
-        if type(info.context) is dict and info.context.get('bypass_validation') is True:
-            return edcb_url
-        # EDCB バックエンドの接続確認
-        if info.data.get('backend') == 'EDCB':
-            # 循環参照を避けるために遅延インポート
-            from app.utils.edcb.EDCBUtil import EDCBUtil
-            # edcb_url を明示的に指定
-            ## edcb_url を省略すると内部で再帰的に LoadConfig() が呼ばれてしまい RecursionError が発生する
-            edcb_host = EDCBUtil.getEDCBHost(edcb_url)
-            edcb_port = EDCBUtil.getEDCBPort(edcb_url)
-            # ホスト名またはポートが指定されていない
-            if ((edcb_host is None) or (edcb_port is None and edcb_host != 'edcb-namedpipe')):
-                raise ValueError(
-                    'URL 内にホスト名またはポートが指定されていません。\n'
-                    'EDCB の URL を間違えている可能性があります。'
-                )
-            # 現在の EpgTimerSrv の動作ステータスを取得できるか試してみる
-            ## RecursionError 回避のために edcb_url を明示的に指定
-            ## ThreadPoolExecutor 上で実行し、自動リロードモード時に発生するイベントループ周りの謎エラーを回避する
-            with concurrent.futures.ThreadPoolExecutor(1) as executor:
-                result = executor.submit(asyncio.run, EDCBUtil.getEDCBStatus(edcb_url)).result()
-            if result == 'Unknown':
-                raise ValueError(
-                    f'EDCB ({edcb_url}) にアクセスできませんでした。\n'
-                    'EDCB が起動していないか、URL を間違えている可能性があります。'
-                )
-            from app import logging
-            logging.info(f'Backend: EDCB ({edcb_url}) Status: {result}')
         return edcb_url
 
     @field_validator('mirakurun_url')
