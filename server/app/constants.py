@@ -172,6 +172,7 @@ LOGGING_CONFIG: dict[str, Any] = {
         'uvicorn.debug': {'level': 'DEBUG', 'handlers': ['debug', 'debug_file'], 'propagate': False},
         'uvicorn.access': {'level': 'INFO', 'handlers': ['access', 'access_file'], 'propagate': False},
         'uvicorn.error': {'level': 'INFO'},
+        'apscheduler': {'level': 'INFO', 'handlers': ['default', 'default_file'], 'propagate': False},
     },
 }
 

@@ -45,6 +45,7 @@ dependencies = [
     "uvloop>=0.21.0,<0.22 ; sys_platform == 'linux'",
     "watchfiles>=1.0.4,<2",
     "winloop>=0.1.8,<0.2 ; sys_platform == 'win32'",
+    "apscheduler>=3.11.0",
 ]
 
 [dependency-groups]

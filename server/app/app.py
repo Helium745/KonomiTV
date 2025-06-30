@@ -3,6 +3,8 @@ import asyncio
 import atexit
 import mimetypes
 from pathlib import Path
+from contextlib import asynccontextmanager
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 import tortoise.contrib.fastapi
 import tortoise.log
@@ -10,7 +12,6 @@ from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi_utils.tasks import repeat_every
 
 from app import logging
 from app.config import Config, LoadConfig
@@ -54,6 +55,91 @@ except AssertionError:
     # バリデーションは既にサーバー起動時に行われているためスキップする
     CONFIG = LoadConfig(bypass_validation=True)
 
+
+recorded_scan_task: RecordedScanTask | None = None
+cleanup = False
+# アプリケーションの起動時に実行される処理
+async def Startup():
+    global recorded_scan_task
+
+    # チャンネル情報を更新
+    await Channel.update()
+
+    # ニコニコ実況関連のステータスを更新
+    await Channel.updateJikkyoStatus()
+
+    # 番組情報を更新
+    await Program.update()
+
+    # 登録されている Twitter アカウントの情報を更新
+    await TwitterAccount.updateAccountsInformation()
+
+    # 全てのチャンネル&品質のライブストリームを初期化する
+    for channel in await Channel.filter(is_watchable=True).order_by('channel_number'):
+        for quality in QUALITY:
+            LiveStream(channel.display_channel_id, quality)
+
+    # 録画フォルダ監視・メタデータ更新/同期タスクを開始
+    ## 録画ファイルの量次第では録画ファイルの更新確認に時間がかかるため、非同期で実行する
+    # ref: https://docs.astral.sh/ruff/rules/asyncio-dangling-task/
+    recorded_scan_task = RecordedScanTask()
+    await recorded_scan_task.start()
+
+# 定期的なジョブの設定
+
+# サーバー設定で指定された時間 (デフォルト: 15分) ごとに1回、チャンネル情報と番組情報を更新する
+# チャンネル情報は頻繁に変わるわけではないけど、手動で再起動しなくても自動で変更が適用されてほしい
+# 番組情報の更新処理はかなり重くストリーム配信などの他の処理に影響してしまうため、マルチプロセスで実行する
+async def UpdateChannelAndProgram():
+    await Channel.update()
+    await Channel.updateJikkyoStatus()
+    await Program.update(multiprocess=True)
+
+# 30秒に1回、ニコニコ実況関連のステータスを更新する
+async def UpdateChannelJikkyoStatus():
+    await Channel.updateJikkyoStatus()
+
+# 1時間に1回、登録されている Twitter アカウントの情報を更新する
+async def UpdateTwitterAccountInformation():
+    await TwitterAccount.updateAccountsInformation()
+
+# サーバーの終了時に実行する
+async def Shutdown():
+
+    # 2度呼ばれないように
+    global cleanup
+    if cleanup is True:
+        return
+    cleanup = True
+
+    # 全てのライブストリームを終了する
+    for live_stream in LiveStream.getAllLiveStreams():
+        live_stream.setStatus('Offline', 'ライブストリームは Offline です。', True)
+
+    # 録画フォルダ監視タスクを停止
+    global recorded_scan_task
+    if recorded_scan_task is not None:
+        await recorded_scan_task.stop()
+        recorded_scan_task = None
+
+# lifespanを定義
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    FastAPI のライフスパンコンテキストマネージャー。
+    アプリケーションの起動時と終了時に実行される処理を定義する。
+    """
+    # 定期的なジョブのスケジューリング
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(UpdateChannelAndProgram, "interval", seconds=CONFIG.general.program_update_interval * 60, max_instances=1)
+    scheduler.add_job(UpdateChannelJikkyoStatus, "interval", seconds=0.5 * 60, max_instances=1)
+    scheduler.add_job(UpdateTwitterAccountInformation, "interval", seconds=60 * 60, max_instances=1)
+    scheduler.start()
+
+    await Startup()
+    yield
+    await Shutdown()
+
 # FastAPI を初期化
 app = FastAPI(
     title = 'KonomiTV',
@@ -62,6 +148,7 @@ app = FastAPI(
     openapi_url = '/api/openapi.json',
     docs_url = '/api/docs',
     redoc_url = '/api/redoc',
+    lifespan=lifespan,
 )
 
 # ルーターの追加
@@ -174,82 +261,6 @@ tortoise.contrib.fastapi.register_tortoise(
     generate_schemas = True,
     add_exception_handlers = True,
 )
-
-# サーバーの起動時に実行する
-recorded_scan_task: RecordedScanTask | None = None
-@app.on_event('startup')
-async def Startup():
-    global recorded_scan_task
-
-    # チャンネル情報を更新
-    await Channel.update()
-
-    # ニコニコ実況関連のステータスを更新
-    await Channel.updateJikkyoStatus()
-
-    # 番組情報を更新
-    await Program.update()
-
-    # 登録されている Twitter アカウントの情報を更新
-    await TwitterAccount.updateAccountsInformation()
-
-    # 全てのチャンネル&品質のライブストリームを初期化する
-    for channel in await Channel.filter(is_watchable=True).order_by('channel_number'):
-        for quality in QUALITY:
-            LiveStream(channel.display_channel_id, quality)
-
-    # 録画フォルダ監視・メタデータ更新/同期タスクを開始
-    ## 録画ファイルの量次第では録画ファイルの更新確認に時間がかかるため、非同期で実行する
-    # ref: https://docs.astral.sh/ruff/rules/asyncio-dangling-task/
-    recorded_scan_task = RecordedScanTask()
-    await recorded_scan_task.start()
-
-# サーバー設定で指定された時間 (デフォルト: 15分) ごとに1回、チャンネル情報と番組情報を更新する
-# チャンネル情報は頻繁に変わるわけではないけど、手動で再起動しなくても自動で変更が適用されてほしい
-# 番組情報の更新処理はかなり重くストリーム配信などの他の処理に影響してしまうため、マルチプロセスで実行する
-@app.on_event('startup')
-@repeat_every(
-    seconds = CONFIG.general.program_update_interval * 60,
-    wait_first = CONFIG.general.program_update_interval * 60,
-    logger = logging.logger,
-)
-async def UpdateChannelAndProgram():
-    await Channel.update()
-    await Channel.updateJikkyoStatus()
-    await Program.update(multiprocess=True)
-
-# 30秒に1回、ニコニコ実況関連のステータスを更新する
-@app.on_event('startup')
-@repeat_every(seconds=0.5 * 60, wait_first=0.5 * 60, logger=logging.logger)
-async def UpdateChannelJikkyoStatus():
-    await Channel.updateJikkyoStatus()
-
-# 1時間に1回、登録されている Twitter アカウントの情報を更新する
-@app.on_event('startup')
-@repeat_every(seconds=60 * 60, wait_first=60 * 60, logger=logging.logger)
-async def UpdateTwitterAccountInformation():
-    await TwitterAccount.updateAccountsInformation()
-
-# サーバーの終了時に実行する
-cleanup = False
-@app.on_event('shutdown')
-async def Shutdown():
-
-    # 2度呼ばれないように
-    global cleanup
-    if cleanup is True:
-        return
-    cleanup = True
-
-    # 全てのライブストリームを終了する
-    for live_stream in LiveStream.getAllLiveStreams():
-        live_stream.setStatus('Offline', 'ライブストリームは Offline です。', True)
-
-    # 録画フォルダ監視タスクを停止
-    global recorded_scan_task
-    if recorded_scan_task is not None:
-        await recorded_scan_task.stop()
-        recorded_scan_task = None
 
 # shutdown イベントが発火しない場合も想定し、アプリケーションの終了時に Shutdown() が確実に呼ばれるように
 # atexit は同期関数しか実行できないので、asyncio.run() でくるむ
