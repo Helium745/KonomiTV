@@ -2,227 +2,121 @@
 
 ## プロジェクト固有の注意事項
 
-- yarn や uv はそれぞれ `client/` と `server/` のディレクトリに移動した状態で実行してください。ルートディレクトリにはパッケージ管理系のファイルは一切配置していません。
-- サーバー側では uv を使っているので、python コマンドは必ず全て uv run 経由で実行します。python を直接実行すると .venv/ 以下のライブラリがインストールされていないために失敗します。
+- `yarn` / `uv` は必ず `client/` / `server/` に移動して実行する
+- python は必ず `uv run` 経由で実行する
 
 ## 開発環境構成
 
-### サーバー API (port 7000、常にユーザー管理)
+### サーバー API (port 7000、常にユーザー管理 / エージェントは起動・停止しない)
 
-- 依頼を受けた時点で、サーバー API は次のいずれかの状態で常駐しています。**いずれもユーザーが管理しているプロセスであり、エージェントが直接起動・停止すべきではありません**
-  - **リロードモード**: `server/` で `uv run task dev` で起動。コード変更が hot reload されます。基本的にこの状態で依頼が来ます
-  - **リロードなしの開発サーバー**: `server/` で `uv run task serve` で起動。hot reload なしのユーザー権限プロセスです
-  - **pm2 常駐**: `sudo pm2 start KonomiTV` で起動。KonomiTV は root 側の pm2 プロファイルにしかインストールされていないため、`pm2` コマンドの実行には必ず `sudo` が必要であり、**エージェントがユーザーの許可なく `pm2` を実行することはできません**
-- FastAPI の listen ポートは常に 7000 で固定です (Akebi HTTPS Server が `127.0.0.77:7010` をリバースプロキシしています)
-- サーバー側コードを変更して挙動を確認したい場合の手順:
-  - リロードモードで動いている場合は、変更が自動で反映されます
-  - リロードなし開発サーバー / pm2 常駐で動いている場合は、**ユーザーに「リロードモードでの起動への切り替え、もしくはサーバー再起動」を依頼してください**
-- エージェントが直接 `python KonomiTV.py` や `uv run python KonomiTV.py` を実行するのは禁止です。サーバーの起動には必ず taskipy で定義済みの `uv run task serve` / `uv run task dev` を使用してください (それでも、上記の通り既存プロセスとの衝突を避けるためエージェント自身が起動することは原則避けてください)
+- 基本的にホットリロードモードで常駐している。**エージェントが起動・停止してはならない**
+- listen ポートは常に 7000 固定 (Akebi HTTPS Server が `127.0.0.77:7010` をリバースプロキシ)
+- 挙動確認: リロードモードなら自動反映。それ以外なら**ユーザーに「リロードモード起動への切り替え or 再起動」を依頼する**
+- `python KonomiTV.py` / `uv run python KonomiTV.py` の直接実行も禁止。
 
-### クライアント開発サーバー (port 7001、必要ならエージェントが起動可)
+### クライアント開発サーバー (port 7001、必要ならエージェント起動可)
 
-- クライアントの開発サーバーは普段は起動していません
-- UI を検証する必要がある場合は、`client/` で `yarn dev` をエージェントが起動して構いません
-  - 起動すると port 7001 で Akebi HTTPS Server 経由でリッスンされます (内部の Vite は `127.0.0.77:7011` でリッスンします)
-- **重複起動は禁止**です。起動前に必ず `ps -ef | grep vite` などで既存プロセスの有無を確認してください
-- `yarn dev` で起動するクライアントは、開発モード時のみ同じドメインの `:7000` のサーバー API を直接叩くようハードコードされています ([client/src/utils/Utils.ts](client/src/utils/Utils.ts) の `Utils.api_base_url` を参照)。Vite の proxy 設定は不要です
-- Chrome DevTools MCP からの検証時は `https://my.local.konomi.tv:7001` にアクセスしてください
-- クライアント開発サーバー経由で API リクエストが想定通りに動かない場合でも、**サーバーを立て直そうとしないでください**。まず `Utils.api_base_url` の DEV 分岐の挙動を読み直し、port 7000 で動いているサーバー側の状態を `ps -ef | grep KonomiTV` などで確認してください
+- 普段は起動していない。UI 検証時は `client/` で `yarn dev` を起動してよい (Akebi 経由 7001、内部 Vite は `127.0.0.77:7011`)
+- **重複起動禁止**。起動前に `ps -ef | grep vite` で既存プロセスを確認する
+- `yarn dev` のクライアントは開発モード時のみ同ドメイン `:7000` の API を直接叩くようハードコード ([client/src/utils/Utils.ts](client/src/utils/Utils.ts) の `Utils.api_base_url` 参照)。Vite proxy 不要
+- Chrome DevTools MCP では `https://my.local.konomi.tv:7001` にアクセス
+- API が想定通り動かなくても**サーバーを立て直さない**。まず `Utils.api_base_url` の DEV 分岐を読み直し、`ps -ef | grep KonomiTV` で 7000 のサーバー状態を確認する
 
-### Docker 版ステージング (port 7100、別物)
+### その他
 
-- `/Develop/KonomiTV-Docker` 以下には別途 Docker 版のステージング環境があります (port 7100、内部 HTTP は `127.0.0.77:7110`)
-- 本リポジトリの開発環境とは独立した別プロセスです
-
-### HTTPS が必須な理由
-
-- KonomiTV はクリップボードなど Secure Context (HTTPS) でしか動作しない API を使用しています
-- localhost 以外でも正規の HTTPS で提供できるよう、Akebi HTTPS Server が `akebi.konomi.tv` の keyless server を経由してリバースプロキシを行っています
-- HTTP に直接アクセスされると Secure Context API が動かず混乱を招くため、内部の HTTP は `127.0.0.77` でリッスンする構成になっています
+- **HTTPS 必須**: クリップボード等 Secure Context (HTTPS) でしか動かない API を使うため。Akebi HTTPS Server が `akebi.konomi.tv` keyless server 経由でリバースプロキシし、内部 HTTP は `127.0.0.77` でリッスンする
 
 ## 技術スタック
 
-KonomiTV は、クライアント・サーバーアーキテクチャに基づく Web アプリケーション (PWA) です。
-以下の2つの主要部分で構成されています。
+クライアント・サーバー構成のセルフホスト型 Web アプリ (PWA)。Windows / Linux のクロスプラットフォーム対応。
 
-KonomiTV が一般的な Web サービスと異なる点は、フロントエンドと API サーバーの両方が各ユーザーの PC 環境で動作する点です。
-したがって、Windows と Linux の両方で動作するように開発する必要があります。
-Windows では Windows サービス、Linux では pm2 サービスとして動作するよう設計しています。
-
-- `client/`: KonomiTV のフロントエンドアプリケーション (PWA)
-  - TypeScript
-  - yarn v1
-  - Vite
-  - Vue.js 3.x
-    - Vuetify 3.x
-    - Pinia
-- `server/`: KonomiTV のバックエンド API サーバー
-  - Python 3.11
-  - uv
-  - Uvicorn
-  - FastAPI
-    - Pydantic v2
-  - Tortoise ORM
-    - SQLite (ローカル動作が必要なため MySQL や PostgreSQL は採用できなかった)
-    - Aerich
+- `client/`: フロントエンド (PWA) — TypeScript / yarn v1 / Vite / Vue.js 3.x (Vuetify 3.x, Pinia)
+- `server/`: バックエンド API — Python 3.11 / uv / Uvicorn / FastAPI (Pydantic v2) / Tortoise ORM + SQLite (ローカル動作必須のため SQLite 採用) + Aerich
 
 ## ディレクトリ構成
 
 ### クライアント (`client/`)
 
-- `public/`: 直接提供される静的ファイル
+- `public/`: 静的ファイル
 - `src/`: ソースコード
-  - `views/`: Vue ルートコンポーネント/ページ
-    - `TV/`: テレビ視聴関連ページ
-    - `Videos/`: 動画関連ページ
-    - `Reservations/`: 予約関連ページ
-    - `Settings/`: アプリケーション設定ページ
-    - `Login.vue`: ログインページ
-    - `Register.vue`: アカウント登録ページ
-    - `MyList.vue`: マイリストページ
-    - `WatchedHistory.vue`: 視聴履歴ページ
-    - `MyPage.vue`: マイページ
-    - `NotFound.vue`: 404 エラーページ
+  - `views/`: ルートコンポーネント/ページ (`TV/` `Videos/` `Reservations/` `Settings/`、および `Login.vue` `Register.vue` `MyList.vue` `WatchedHistory.vue` `MyPage.vue` `NotFound.vue`)
   - `components/`: Vue コンポーネント
-    - `Watch/`: テレビ・録画番組視聴画面向けコンポーネント群
-      - `Panel/`: 視聴画面右側のパネル内表示用コンポーネント群
-        - `Twitter/`: ツイート検索/タイムライン表示/キャプチャ管理/ツイート表示用コンポーネント群
-    - `Settings/`: 設定ページから呼び出されるダイアログコンポーネント群
-    - `HeaderBar.vue`: ヘッダーバー
-    - `SPHeaderBar.vue`: スマートフォン用ヘッダーバー
-    - `Navigation.vue`: ナビゲーション
-    - `BottomNavigation.vue`: スマートフォン用下部ナビゲーション
-    - `Snackbars.vue`: 通知メッセージ表示コンポーネント
-    - `Breadcrumbs.vue`: パンくずリスト表示コンポーネント
-  - `stores/`: 状態管理 (Pinia ストア)
-  - `services/`: サーバー API へのサービスクライアント
-    - `player/`: KonomiTV の視聴画面で用いられるライブ/ビデオプレイヤーのロジック (重要)
-      - `managers/`: PlayerController に紐づく様々な機能のロジックを提供し、各機能に責任を持つ PlayerManager 群
-      - `PlayerController.ts`: 動画プレイヤーである DPlayer に関連するロジックを丸ごとラップするクラスで、KonomiTV の再生系ロジックの中核を担う
-  - `utils/`: ユーティリティ関数とヘルパー
-  - `workers/`: 重い処理をバックグラウンドで実行するための Web Workers コード (with Comlink)
-  - `styles/`: グローバル CSS の定義 (グローバル CSS は `App.vue` の方がメイン)
-  - `router/`: Vue Router 設定
-  - `plugins/`: Vue プラグインの初期化定義
-  - `App.vue`: アプリケーションのルートコンポーネント (グローバル CSS 定義もここに含まれる)
-  - `main.ts`: アプリケーションのエントリーポイント・初期化処理
-- `package.json`: Node.js プロジェクト設定と依存関係 (yarn)
-- `vite.config.mts`: Vite ビルド設定
-- `tsconfig.json`: TypeScript 設定
-- `.eslintrc.json`: ESLint コードスタイル設定
+    - `Watch/`: 視聴画面向け。`Panel/` (右パネル内表示)、`Panel/Twitter/` (ツイート検索/TL/キャプチャ管理/表示)
+    - `Settings/`: 設定ページのダイアログ群
+    - `HeaderBar.vue` / `SPHeaderBar.vue` (スマホ用) / `Navigation.vue` / `BottomNavigation.vue` (スマホ用) / `Snackbars.vue` (通知) / `Breadcrumbs.vue` (パンくず)
+  - `stores/`: Pinia ストア
+  - `services/`: API サービスクライアント
+    - `player/`: ライブ/ビデオプレイヤーのロジック (**重要**)
+      - `managers/`: PlayerController に紐づく各機能の PlayerManager 群
+      - `PlayerController.ts`: DPlayer 関連ロジックをラップする再生系の中核クラス
+  - `utils/`: ユーティリティ
+  - `workers/`: Web Workers コード (with Comlink)
+  - `styles/`: グローバル CSS (メインは `App.vue`)
+  - `router/`: Vue Router 設定 / `plugins/`: Vue プラグイン初期化
+  - `App.vue`: ルートコンポーネント (グローバル CSS 定義含む) / `main.ts`: エントリーポイント
+- `package.json` / `vite.config.mts` / `tsconfig.json` / `.eslintrc.json`
 
 ### サーバー (`server/`)
 
 - `app/`: FastAPI アプリケーションコード
   - `routers/`: API ルートハンドラー
-    - `ChannelsRouter.py`: チャンネル関連メタデータ取得 API
-    - `ProgramsRouter.py`: 番組関連メタデータ取得 API
-    - `VideosRouter.py`: 録画番組メタデータ取得 API
-    - `SeriesRouter.py`: 番組シリーズ関連 API
-    - `LiveStreamsRouter.py`: 放送中テレビ放送のライブストリーミング配信関連 API
-    - `VideoStreamsRouter.py`: 録画番組のストリーミング配信関連 API
-    - `ReservationsRouter.py`: EDCB と連携したテレビ番組の録画予約関連 API
-    - `ReservationConditionsRouter.py`: EDCB と連携したテレビ番組の自動録画予約条件 (EPG 自動予約) 関連 API
-    - `DataBroadcastingRouter.py`: データ放送のインターネット接続機能向け API
-    - `CapturesRouter.py`: キャプチャ画像管理 API
-    - `TwitterRouter.py`: Twitter 連携 API
-    - `NiconicoRouter.py`: ニコニコ実況連携 API
-    - `UsersRouter.py`: ユーザーアカウント管理 API
-    - `SettingsRouter.py`: クライアント・サーバー設定管理 API
-    - `MaintenanceRouter.py`: サーバーメンテナンス用 API
-    - `VersionRouter.py`: バージョン情報 API
-  - `models/`: データベースモデルとスキーマ
-    - `Channel.py`: チャンネル情報を管理するモデル（放送局情報、チャンネル番号、ロゴ、ストリーム設定など）
-    - `Program.py`: 放送番組情報を管理するモデル（番組メタデータ、EPG 番組情報、タイトル、番組詳細、ジャンルなど）
-    - `RecordedProgram.py`: 録画済み番組のメタデータを管理するモデル（EPG 録画番組情報、録画開始/終了時刻など）
-    - `RecordedVideo.py`: 録画済み番組の動画ファイル情報を管理するモデル（ファイルパス、映像/音声コーデック、ファイルサイズなど）
-    - `Series.py`: 番組シリーズ情報を管理するモデル（シリーズ名、シリーズ ID など）
-    - `SeriesBroadcastPeriod.py`: 番組シリーズの放送期間情報を管理するモデル
-    - `TwitterAccount.py`: Twitter アカウント連携情報を管理するモデル（トークン、認証情報など）
-    - `User.py`: ユーザーアカウント情報を管理するモデル（認証情報、権限など）
-  - `migrations/`: Tortoise ORM のマイグレーションツール: Aerich 向けの DB マイグレーション定義 (Aerich で自動生成されたコードを修正したもの)
-  - `streams/`: テレビ放送のライブストリーミング・録画番組のオンデマンドストリーミング関連の実装
-    - `LiveEncodingTask.py`: ライブストリーミング用のエンコード・ストリーミングタスクを管理
-    - `VideoEncodingTask.py`: 録画番組用のエンコード・ストリーミングタスクを管理
-    - `LiveStream.py`: 放送波のライブストリーミングの状態管理
-    - `VideoStream.py`: 録画番組のオンデマンドストリーミングの状態管理
-    - `LivePSIDataArchiver.py`: 放送波から PSI/SI データを抽出・アーカイブする機能の実装
-  - `metadata/`: 録画番組データから番組情報などのメタデータを抽出・保存するための実装
-    - `RecordedScanTask.py`: 録画フォルダの監視とメタデータの DB への同期を行うタスク
-    - `MetadataAnalyzer.py`: 録画ファイルのメタデータを解析するクラス
-    - `TSInfoAnalyzer.py`: 録画 TS ファイルや録画データ関連ファイルに含まれる番組情報を解析するクラス
-    - `ThumbnailGenerator.py`: プレイヤーのシークバー用タイル画像と、候補区間内で最も良い1枚の代表サムネイルを生成するクラス
-    - `CMSectionsDetector.py`: 録画 TS ファイルに含まれる CM 区間を検出するクラス
-  - `utils/`: ユーティリティ関数とヘルパー
-    - `edcb/`: EDCB 連携用の API クライアント実装
-    - `JikkyoClient.py`: ニコニコ実況・NX-Jikkyo 連携用の API クライアント実装
-    - `TwitterGraphQLAPI.py`: Twitter API 連携用にリバースエンジニアリングして開発した API クライアント実装
-    - `TSInformation.py`: 日本のテレビ放送で用いられている MPEG2-TS から情報を取得する際に役立つユーティリティ群
-    - `OAuthCallbackResponse.py`: OAuth 認証のコールバック時にブラウザに情報を渡すために返す特殊なレスポンス
-    - `DriveIOLimiter.py`: ドライブごとの同時実行数を制限するためのユーティリティクラス
-    - `ProcessLimiter.py`: プロセスごとの同時実行数を制限するためのユーティリティクラス
-  - `app.py`: FastAPI アプリケーションやルーターの初期化・バックグラウンドタスクの定義
-  - `config.py`: サーバー設定 (`config.yaml`) のロードとバリデーション
-  - `constants.py`: サーバー全体で用いられるグローバル定数
-  - `logging.py`: ロギング設定
-  - `schemas.py`: API リクエスト/レスポンス型に用いる Pydantic スキーマ
-- `data/`: アプリケーションデータ用ディレクトリ
-  - `database.sqlite`: SQLite データベースファイル
-- `logs/`: アプリケーションログ用ディレクトリ
-- `misc/`: メンテナンス・デバッグ用 Pythonスクリプト群
-- `static/`: サーバー API によって提供される静的ファイル (Git 管理下にあり、放送局ロゴなどが含まれる)
-- `thirdparty/`: FFmpeg や QSVEncC などのエンコーダーをはじめとした、ビルド済みのサードパーティー実行ファイル (Git 管理外で、`uv run task update-thirdparty` で更新する)
-- `pyproject.toml`: Python プロジェクト設定と依存関係 (uv)
-- `KonomiTV.py`: KonomiTV サーバーのエントリーポイント
-- `KonomiTV-Service.py`: Windows サービス管理スクリプト & Windows サービスのエントリーポイント
+    - `ChannelsRouter` (チャンネル) / `ProgramsRouter` (番組) / `VideosRouter` (録画番組) / `SeriesRouter` (シリーズ)
+    - `LiveStreamsRouter` (ライブ配信) / `VideoStreamsRouter` (録画配信)
+    - `ReservationsRouter` (EDCB 録画予約) / `ReservationConditionsRouter` (EPG 自動予約条件) / `DataBroadcastingRouter` (データ放送のネット接続)
+    - `CapturesRouter` (キャプチャ) / `TwitterRouter` (Twitter) / `NiconicoRouter` (ニコニコ実況)
+    - `UsersRouter` (ユーザー) / `SettingsRouter` (設定) / `MaintenanceRouter` (メンテ) / `VersionRouter` (バージョン)
+  - `models/`: DB モデルとスキーマ
+    - `Channel` (放送局/ch番号/ロゴ/ストリーム設定) / `Program` (番組メタ/EPG) / `RecordedProgram` (録画番組メタ/録画時刻) / `RecordedVideo` (動画ファイル情報)
+    - `Series` (シリーズ) / `SeriesBroadcastPeriod` (放送期間) / `TwitterAccount` (Twitter 連携) / `User` (アカウント/権限)
+  - `migrations/`: Aerich 向け DB マイグレーション定義 (自動生成を修正したもの)
+  - `streams/`: ライブ/オンデマンド ストリーミング実装
+    - `LiveEncodingTask` / `VideoEncodingTask` (エンコード・配信タスク) / `LiveStream` / `VideoStream` (状態管理) / `LivePSIDataArchiver` (PSI/SI 抽出・アーカイブ)
+  - `metadata/`: 録画番組からのメタデータ抽出・保存
+    - `RecordedScanTask` (録画フォルダ監視・DB 同期) / `MetadataAnalyzer` (メタデータ解析) / `TSInfoAnalyzer` (TS 番組情報解析) / `ThumbnailGenerator` (シークバー用タイル画像+代表サムネ生成) / `CMSectionsDetector` (CM 区間検出)
+  - `utils/`:
+    - `edcb/` (EDCB 連携クライアント) / `JikkyoClient` (ニコニコ実況・NX-Jikkyo) / `TwitterGraphQLAPI` (リバエン Twitter クライアント) / `TSInformation` (MPEG2-TS 情報取得)
+    - `OAuthCallbackResponse` (OAuth コールバック用特殊レスポンス) / `DriveIOLimiter` (ドライブ別同時実行制限) / `ProcessLimiter` (プロセス別同時実行制限)
+  - `app.py`: FastAPI/ルーター初期化・バックグラウンドタスク定義 / `config.py`: `config.yaml` ロード・バリデーション / `constants.py`: グローバル定数 / `logging.py`: ロギング設定 / `schemas.py`: API 用 Pydantic スキーマ
+- `data/database.sqlite`: SQLite DB / `logs/`: ログ / `misc/`: メンテ・デバッグ用スクリプト
+- `static/`: 提供静的ファイル (Git 管理下、放送局ロゴ等) / `thirdparty/`: ビルド済みエンコーダー等 (Git 管理外、`uv run task update-thirdparty` で更新)
+- `pyproject.toml` / `KonomiTV.py` (エントリーポイント) / `KonomiTV-Service.py` (Windows サービス)
 
 ## コーディング規約
 
 ### 全般
-- コードをざっくり斜め読みした際の可読性を高めるため、日本語のコメントを多めに記述する
-- コードを変更する際、既存のコメントは、変更によりコメント内容がコードの記述と合わなくなった場合を除き、コメント量に関わらずそのまま保持する
-- ログメッセージに関しては文字化けを避けるため、必ず英語で記述する
-- それ以外のコーディングスタイルは、原則変更箇所周辺のコードスタイルに合わせる
-- 不要な薄いラッパーや別名関数は作らず、責務のあるコンポーネントだけを追加する。
-- コメントは冗長なくらいでちょうどよい。条件分岐・ループ・例外処理の直前にはその意図を書き、Python では `__init__()` で代入するインスタンス変数には「保持する情報」「参照されるメソッド」「前提条件」を必ずコメントとして記す。クラス Docstring には責務のみを記載し、引数説明は `__init__()` の Docstring に集約する
-- Enum・Literal・Union 型の文字列表現は `tweet_capture_watermark_position: 'None' | 'TopLeft' | 'TopRight' | 'BottomLeft' | 'BottomRight';` のように基本的に UpperCamelCase で命名する必要がある
-- 通常の Web サービスではないかなり特殊なソフトウェアなので、コンテキストとして分からないことがあれば別途 Readme.md を読むか、私に質問すること
-- DB レコードの Pydantic / TypeScript 定義では、親となるレコード本体のスキーマを最上位に配置し、その下に子スキーマをフィールドの定義順に従って並べる
-- JSON フィールドの値を生成する際は、辞書リテラル (`{}`) を直接書くのではなく、TypedDict のコンストラクタを使用して型構造を明示的に示す
-- 画像の幅・高さ・総数・間隔など、視覚的に重要な情報を持つフィールドは定義の上部に集約し、重要度の高い順に配置することで一目で把握できるようにする
-- 親スキーマから子スキーマへの並び順を徹底し、関連する子スキーマは親となる DB レコードスキーマの直下にまとめて配置する。可読性を損なうような配置変更は行わない
-- TypeScript 側のスキーマ定義も Python 側と同じ順序を維持する。もし差分が発生する場合は、その理由をコメントで明記する
+- 斜め読みの可読性を高めるため日本語コメントを多めに書く。コメントは冗長なくらいでよく、条件分岐・ループ・例外処理の直前には意図を書く
+- 既存コメントは、内容がコードと矛盾しない限り量に関わらず保持する
+- **ログメッセージは文字化け回避のため必ず英語で書く**
+- 上記以外のスタイルは変更箇所周辺のコードに合わせる
+- 不要な薄いラッパーや別名関数は作らず、責務のあるコンポーネントのみ追加する
+- Enum・Literal・Union 型の文字列表現は基本 UpperCamelCase (例: `'None' | 'TopLeft' | 'TopRight' | ...`)
+- かなり特殊なソフトなので、不明点は Readme.md を読むか質問する
+- **スキーマ定義 (Pydantic / TypeScript 共通)**:
+  - 親レコード本体のスキーマを最上位に置き、子スキーマはフィールド定義順に親の直下へまとめて配置 (可読性を損なう配置変更はしない)
+  - JSON フィールド値は辞書リテラル `{}` でなく TypedDict コンストラクタで型構造を明示する
+  - 画像の幅/高さ/総数/間隔など視覚的に重要なフィールドは定義上部に重要度順で集約
+  - TypeScript 側も Python 側と同じ順序を維持。差分が出る場合は理由をコメントで明記
 
 ### Python コード
-- **コードの編集後には、必ず `uv run task lint` コマンドで、Ruff によるコードリンターと Pyright による型チェッカーを実行すること**
-- 文字列にはシングルクォートを用いる (Docstring を除く)
-- Python 3.11 の機能を使う (3.10 以下での動作は考慮不要)
-- ビルトイン型を使用した Type Hint で実装する (from typing import List, Dict などは避ける)
-- Pydantic モデル定義では必ず Annotated 記法を使う。`= Field()` 型の定義は行わずに全て Annotated 記法で定義すること
-- 変数・インスタンス変数は snake_case で命名する
-- 関数・クラス名は UpperCamelCase で命名する (例: `class VideoEncodingTask:`, `def GetClientURL():`)
-  - FastAPI で定義するエンドポイントの関数名も UpperCamelCase で命名する必要がある
-  - FastAPI で定義するエンドポイント名は、文法的に比較的正しくなるようパス名や操作を並び替えた上で、「〇〇API」の形で命名すること
-    - 例: GET `/streams/live/{display_channel_id}/{quality}/mpegts` -> `LiveMPEGTSStreamAPI`
-    - 例: PUT `/users/me` -> `UserUpdateAPI`
-- クラスに生えたメソッド名は lowerCamelCase で命名する (例: `LiveStream.getONAirLiveStreams()`)
-- 複数行のコレクションには末尾カンマを含める
-- `getattr()` で型チェッカーを黙らせるのは禁止。参照する属性は型ヒントやプロパティできちんと公開し、どうしても `getattr()` が必要な場合は「その属性が必ず存在する根拠」を詳細にコメントする
-- すべての Docstring には Args / Returns を明記し、コメントは処理のまとまりごとに必ず加えて「なぜそうするのか」「何を意図した値なのか」を丁寧に説明する。コードを読まなくてもコメントから処理の流れを追えるようにする
-- このプロジェクトでは必ずロギングモジュールとして `import logging` の代わりに `from app import logging` を使うべき
+- **編集後は必ず `uv run task lint` (Ruff + Pyright) を実行する**
+- 文字列はシングルクォート (Docstring 除く)。Python 3.11 の機能を使う (3.10 以下は考慮不要)
+- ビルトイン型で Type Hint (`from typing import List, Dict` は避ける)
+- Pydantic は必ず Annotated 記法 (`= Field()` は使わない)
+- 命名: 変数・インスタンス変数は snake_case / 関数・クラスは UpperCamelCase / クラスのメソッドは lowerCamelCase
+  - FastAPI エンドポイント関数も UpperCamelCase。エンドポイント名はパス/操作を文法的に並び替え「〇〇API」形にする (例: GET `/streams/live/{id}/{quality}/mpegts` → `LiveMPEGTSStreamAPI`、PUT `/users/me` → `UserUpdateAPI`)
+- 複数行コレクションは末尾カンマを含める
+- `getattr()` で型チェッカーを黙らせるのは禁止。属性は型ヒント/プロパティで公開し、やむを得ない場合は「必ず存在する根拠」を詳細にコメント
+- Docstring には Args / Returns を明記。`__init__()` で代入するインスタンス変数には「保持する情報/参照されるメソッド/前提条件」をコメント。クラス Docstring は責務のみ記載し引数説明は `__init__()` に集約
+- ロギングは `import logging` でなく必ず `from app import logging` を使う
 
 ### Vue / TypeScript コード
+- **編集後は必ず `yarn lint; yarn typecheck` (ESLint + tsc) を実行する**
+- 文字列はシングルクォート。型安全性を確保する
+- 新規実装は Vue 3 Composition API パターン (変数は原則 lowerCamelCase)。既存の Options API コンポーネントはそのまま維持する
+- 外部 API フィールドはサーバー側 snake_case のまま参照してよい
+- コンポーネント属性は可能な限り 1 行に (約100文字まで)
+- **day.js は必ず `utils/index.ts` からインポートして使う。`new Date()` は絶対に使わない**
 
-- **コードの編集後には、必ず `yarn lint; yarn typecheck` コマンドで、ESLint によるコードリンターと TypeScript による型チェッカーを実行すること**
-- 文字列にはシングルクォートを用いる
-- 新規で実装する箇所に関しては Vue 3 Composition API パターンに従う
-  - Vue.js 2 から移行した関係で Options API で書かれているコンポーネントがあるが、それらは Options API のまま維持する
-- 新規で実装する Vue 3 Composition API のコンポーネントでは、原則として変数を lowerCamelCase で命名する
-  - FastAPI サーバーでは snake_case で命名している関係で外部 API のフィールドは全てスネークケースになっているが、これはそのまま参照して良い
-- TypeScript による型安全性を確保する
-- コンポーネント属性は可能な限り1行に記述 (約100文字まで)
-- 必ず day.js を utils/index.ts からインポートして使うこと！！！new Date() を絶対に使うな！！！
-
-### CSS / SCSS スタイリング
-- このプロジェクトで使用している色 (CSS 変数) などは `client/src/App.vue` や `client/src/plugins/vuetify.ts` に定義しているので、それを参照すること
-- 新規に UI を実装する際は、すでに実装されている他のコンポーネントやページの大まかなデザインの方向性を踏襲すること
+### CSS / SCSS
+- 使用色 (CSS 変数) 等は `client/src/App.vue` / `client/src/plugins/vuetify.ts` を参照する
+- 新規 UI は既存コンポーネント・ページのデザインの方向性を踏襲する
