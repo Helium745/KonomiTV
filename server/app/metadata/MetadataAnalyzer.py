@@ -203,6 +203,12 @@ class MetadataAnalyzer:
     # TS の映像ストリーム変化検出で、各サンプル位置から読み込む最大バイト数
     ## 末尾サンプルでも同じ値を使い、割合指定だけでは短くなりやすい小さめの録画でも PMT を拾える範囲を確保する
     MAX_STREAM_SCAN_BYTES: ClassVar[int] = 8 * 1024 * 1024
+    # 「一部のみ録画」フラグを立てる際の許容誤差 (秒)
+    ## チューナー確保や録画プロセス起動にかかる数百 ms 程度の遅延は、実際には番組頭が欠けていなくても
+    ## TOT 解析上の録画開始/終了時刻が番組の開始/終了時刻からわずかにずれる形で現れる
+    ## この程度の誤差まで「一部のみ録画」扱いにすると、実際は完全に録画できている番組にまで警告が出てしまうため、
+    ## 数秒単位の許容誤差を設けて、番組本編が数十秒〜分単位で欠けている場合のみを検出する
+    PARTIALLY_RECORDED_TOLERANCE_SECONDS: ClassVar[float] = 3.0
 
     def __init__(self, recorded_file_path: Path) -> None:
         """
@@ -614,8 +620,12 @@ class MetadataAnalyzer:
 
             # 番組開始時刻 < 録画開始時刻 or 録画終了時刻 < 番組終了時刻 の場合、部分的に録画されていることを示すフラグを立てる
             ## 番組全編を録画するには、録画開始時刻が番組開始時刻よりも前で、録画終了時刻が番組終了時刻よりも後である必要がある
-            if (recorded_program.start_time < recorded_video.recording_start_time or
-                recorded_video.recording_end_time < recorded_program.end_time):
+            ## ただし、チューナー確保や録画プロセス起動にかかる程度のわずかなズレまで拾ってしまうと、実際には
+            ## 全編録画できている番組にも警告が出てしまうため、PARTIALLY_RECORDED_TOLERANCE_SECONDS 秒の許容誤差を設ける
+            start_missing_seconds = (recorded_video.recording_start_time - recorded_program.start_time).total_seconds()
+            end_missing_seconds = (recorded_program.end_time - recorded_video.recording_end_time).total_seconds()
+            if (start_missing_seconds > self.PARTIALLY_RECORDED_TOLERANCE_SECONDS or
+                end_missing_seconds > self.PARTIALLY_RECORDED_TOLERANCE_SECONDS):
                 recorded_program.is_partially_recorded = True
             else:
                 recorded_program.is_partially_recorded = False
