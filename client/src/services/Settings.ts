@@ -110,10 +110,7 @@ export interface IClientSettings {
  */
 export interface IServerSettings {
     general: {
-        backend: 'EDCB' | 'Mirakurun';
-        always_receive_tv_from_mirakurun: boolean;
-        edcb_url: string;
-        mirakurun_url: string;
+        mirakc_url: string;
         encoder: 'FFmpeg' | 'QSVEncC' | 'NVEncC' | 'VCEEncC' | 'rkmppenc';
         program_update_interval: number;
         debug: boolean;
@@ -141,10 +138,7 @@ export interface IServerSettings {
 /* サーバー設定を表すインターフェースのデフォルト値 */
 export const IServerSettingsDefault: IServerSettings = {
     general: {
-        backend: 'EDCB',
-        always_receive_tv_from_mirakurun: false,
-        edcb_url: 'tcp://127.0.0.1:4510/',
-        mirakurun_url: 'http://127.0.0.1:40772/',
+        mirakc_url: 'http://127.0.0.1:40772/',
         encoder: 'FFmpeg',
         program_update_interval: 5.0,
         debug: false,

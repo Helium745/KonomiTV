@@ -1,6 +1,4 @@
 
-import asyncio
-import concurrent.futures
 import platform
 import re
 import subprocess
@@ -139,102 +137,61 @@ class ClientSettings(BaseModel):
 # config.yaml のバリデーションは設定データをこの Pydantic モデルに通すことで行う
 
 class _ServerSettingsGeneral(BaseModel):
-    backend: Literal['EDCB', 'Mirakurun'] = 'EDCB'
-    always_receive_tv_from_mirakurun: bool = False
-    edcb_url: Annotated[Url, UrlConstraints(allowed_schemes=['tcp'])] = Url('tcp://127.0.0.1:4510/')
-    mirakurun_url: Annotated[Url, UrlConstraints(allowed_schemes=['http', 'https'])] = Url('http://127.0.0.1:40772/')
+    mirakc_url: Annotated[Url, UrlConstraints(allowed_schemes=['http', 'https'])] = Url('http://127.0.0.1:40772/')
     encoder: Literal['FFmpeg', 'QSVEncC', 'NVEncC', 'VCEEncC', 'rkmppenc'] = 'FFmpeg'
     program_update_interval: Annotated[float, confloat(ge=0.1)] = 5.0
     debug: bool = False
     debug_encoder: bool = False
 
-    @field_validator('edcb_url')
-    def validate_edcb_url(cls, edcb_url: Url, info: ValidationInfo) -> Url:
-        # URL を末尾のスラッシュありに統一
-        edcb_url = Url(str(edcb_url).rstrip('/') + '/')
-        # バリデーションをスキップする場合はここで終了
-        if type(info.context) is dict and info.context.get('bypass_validation') is True:
-            return edcb_url
-        # EDCB バックエンドの接続確認
-        if info.data.get('backend') == 'EDCB':
-            # 循環参照を避けるために遅延インポート
-            from app.utils.edcb.EDCBUtil import EDCBUtil
-            # edcb_url を明示的に指定
-            ## edcb_url を省略すると内部で再帰的に LoadConfig() が呼ばれてしまい RecursionError が発生する
-            edcb_host = EDCBUtil.getEDCBHost(edcb_url)
-            edcb_port = EDCBUtil.getEDCBPort(edcb_url)
-            # ホスト名またはポートが指定されていない
-            if ((edcb_host is None) or (edcb_port is None and edcb_host != 'edcb-namedpipe')):
-                raise ValueError(
-                    'URL 内にホスト名またはポートが指定されていません。\n'
-                    'EDCB の URL を間違えている可能性があります。'
-                )
-            # 現在の EpgTimerSrv の動作ステータスを取得できるか試してみる
-            ## RecursionError 回避のために edcb_url を明示的に指定
-            ## ThreadPoolExecutor 上で実行し、自動リロードモード時に発生するイベントループ周りの謎エラーを回避する
-            with concurrent.futures.ThreadPoolExecutor(1) as executor:
-                result = executor.submit(asyncio.run, EDCBUtil.getEDCBStatus(edcb_url)).result()
-            if result == 'Unknown':
-                raise ValueError(
-                    f'EDCB ({edcb_url}) にアクセスできませんでした。\n'
-                    'EDCB が起動していないか、URL を間違えている可能性があります。'
-                )
-            from app import logging
-            logging.info(f'Backend: EDCB ({edcb_url}) Status: {result}')
-        return edcb_url
-
-    @field_validator('mirakurun_url')
-    def validate_mirakurun_url(cls, mirakurun_url: Url, info: ValidationInfo) -> Url:
+    @field_validator('mirakc_url')
+    def validate_mirakc_url(cls, mirakc_url: Url, info: ValidationInfo) -> Url:
         # URL を末尾のスラッシュありに統一
         ## HTTP/HTTPS URL では Pydantic の Url インスタンスが自動的に末尾のスラッシュを付けてしまうようだが、
         ## 挙動が変わらないとも限らないので、一応明示的に付けておく
-        mirakurun_url = Url(str(mirakurun_url).rstrip('/') + '/')
+        mirakc_url = Url(str(mirakc_url).rstrip('/') + '/')
         # バリデーションをスキップする場合はここで終了
         if type(info.context) is dict and info.context.get('bypass_validation') is True:
-            return mirakurun_url
-        # Mirakurun バックエンドの接続確認
-        if info.data.get('backend') == 'Mirakurun' or info.data.get('always_receive_tv_from_mirakurun') is True:
-            # 試しにリクエストを送り、200 (OK) が返ってきたときだけ有効な URL とみなす
-            try:
-                response = httpx.get(
-                    # Mirakurun API は http://127.0.0.1:40772//api/tuners のような二重スラッシュを許容しないので、
-                    # mirakurun_url の末尾のスラッシュを削除してから endpoint を追加する必要がある
-                    ## 従来は /api/version にアクセスしていたが、Mirakurun 4.0.0-beta.5 以下のバージョンには
-                    ## API 実行時に録画中のストリームがドロップする重大なバグがあるため、他のエンドポイントを使うようにした
-                    ## ref: https://github.com/Chinachu/Mirakurun/commit/27fccf9cd9dd08e56614dabf2ceb1b27a6096f0e
-                    url = str(mirakurun_url).rstrip('/') + '/api/tuners',
-                    headers = API_REQUEST_HEADERS,
-                    timeout = 20,  # 久々のアクセスだとなぜか時間がかかることがあるため、ここだけタイムアウトを長めに設定
-                )
-                # レスポンスヘッダーの Server から Mirakurun か mirakc かを判定
-                server_header = response.headers.get('server', '').lower()
-                if 'mirakc' in server_header:
-                    mirakurun_or_mirakc = 'mirakc'
-                    # Server ヘッダーからバージョン情報を抽出 (例: mirakc/3.4.4)
-                    version_info = server_header.split('/')[-1] if '/' in server_header else 'unknown'
-                else:
-                    mirakurun_or_mirakc = 'Mirakurun'
-                    # Server ヘッダーからバージョン情報を抽出 (例: Mirakurun/3.9.0-rc.4)
-                    version_info = server_header.split('/')[-1] if '/' in server_header else 'unknown'
-            except (httpx.NetworkError, httpx.TimeoutException):
+            return mirakc_url
+        # mirakc への接続確認
+        ## /api/tuners にリクエストを送り、200 (OK) が返ってきたときだけ有効な URL とみなす
+        ## 従来は /api/version にアクセスしていたが、Mirakurun 4.0.0-beta.5 以下のバージョンには
+        ## API 実行時に録画中のストリームがドロップする重大なバグがあるため、他のエンドポイントを使うようにした
+        ## ref: https://github.com/Chinachu/Mirakurun/commit/27fccf9cd9dd08e56614dabf2ceb1b27a6096f0e
+        try:
+            response = httpx.get(
+                # mirakc API は二重スラッシュを許容しないので末尾のスラッシュを削除してから endpoint を追加する
+                url = str(mirakc_url).rstrip('/') + '/api/tuners',
+                headers = API_REQUEST_HEADERS,
+                timeout = 20,  # 久々のアクセスだとなぜか時間がかかることがあるため、ここだけタイムアウトを長めに設定
+            )
+            # レスポンスヘッダーの Server から mirakc かどうかを確認
+            ## KonomiTV は mirakc 専用。Mirakurun は録画予約に必要なエンドポイントを提供していない
+            server_header = response.headers.get('server', '').lower()
+            if 'mirakc' not in server_header:
                 raise ValueError(
-                    f'Mirakurun / mirakc ({mirakurun_url}) にアクセスできませんでした。\n'
-                    'Mirakurun / mirakc が起動していないか、URL を間違えている可能性があります。'
+                    f'{mirakc_url} は mirakc の URL ではありません。\n'
+                    'KonomiTV は mirakc 専用です。Mirakurun は録画予約に必要なエンドポイントを提供していません。\n'
+                    'mirakc をインストールし、mirakc_url に mirakc の URL を指定してください。'
                 )
-            try:
-                response_json = response.json()
-                if response.status_code != 200 or not isinstance(response_json, list) or version_info == 'unknown':
-                    raise ValueError()
-            except Exception:
-                raise ValueError(
-                    f'{mirakurun_url} は {mirakurun_or_mirakc} の URL ではありません。\n'
-                    f'{mirakurun_or_mirakc} の URL を間違えている可能性があります。'
-                )
-            from app import logging
-            logging.info(f'Backend: {mirakurun_or_mirakc} {version_info} ({mirakurun_url})')
-            if info.data.get('always_receive_tv_from_mirakurun') is True:
-                logging.info(f'Always receive TV from {mirakurun_or_mirakc}.')
-        return mirakurun_url
+            # Server ヘッダーからバージョン情報を抽出 (例: mirakc/3.4.4)
+            version_info = server_header.split('/')[-1] if '/' in server_header else 'unknown'
+        except (httpx.NetworkError, httpx.TimeoutException):
+            raise ValueError(
+                f'mirakc ({mirakc_url}) にアクセスできませんでした。\n'
+                'mirakc が起動していないか、URL を間違えている可能性があります。'
+            )
+        try:
+            response_json = response.json()
+            if response.status_code != 200 or not isinstance(response_json, list) or version_info == 'unknown':
+                raise ValueError()
+        except Exception:
+            raise ValueError(
+                f'{mirakc_url} は mirakc の URL ではありません。\n'
+                'mirakc の URL を間違えている可能性があります。'
+            )
+        from app import logging
+        logging.info(f'Backend: mirakc {version_info} ({mirakc_url})')
+        return mirakc_url
 
     @field_validator('encoder')
     def validate_encoder(cls, encoder: str, info: ValidationInfo) -> str:
@@ -441,7 +398,44 @@ def LoadConfig(bypass_validation: bool = False) -> ServerSettings:
         logging.error(f'{type(error).__name__}: {error}')
         sys.exit(1)
 
+    def MigrateLegacyConfig(config_dict: dict[str, Any]) -> dict[str, Any]:
+        """
+        旧設定キー (backend / edcb_url / always_receive_tv_from_mirakurun / mirakurun_url) を
+        新設定キーに読み替えるマイグレーション処理
+
+        Args:
+            config_dict (dict[str, Any]): config.yaml から読み込んだ設定データ (MergeConfigWithDefaults 前)
+
+        Returns:
+            dict[str, Any]: マイグレーション済みの設定データ
+        """
+        if 'general' not in config_dict:
+            return config_dict
+        general = config_dict['general']
+
+        # backend / edcb_url / always_receive_tv_from_mirakurun は廃止
+        old_backend = general.pop('backend', None)
+        general.pop('edcb_url', None)
+        general.pop('always_receive_tv_from_mirakurun', None)
+
+        # mirakurun_url → mirakc_url に読み替え (mirakc_url が未設定の場合のみ)
+        old_mirakurun_url = general.pop('mirakurun_url', None)
+        if 'mirakc_url' not in general and old_mirakurun_url is not None:
+            general['mirakc_url'] = old_mirakurun_url
+        elif 'mirakc_url' not in general and old_backend == 'EDCB':
+            # EDCB のみだった環境には警告を出す (mirakc_url はデフォルト値で補完される)
+            from app import logging
+            logging.warning(
+                'EDCB バックエンドは廃止されました。\n'
+                'mirakc をインストールし、config.yaml の mirakc_url に mirakc の URL を設定してください。'
+            )
+
+        return config_dict
+
     try:
+        # 旧設定キーを新設定キーに読み替えるマイグレーション処理
+        config_dict = MigrateLegacyConfig(config_dict)
+
         # config.yaml に存在しない設定値はデフォルト値で補完する
         config_dict = MergeConfigWithDefaults(config_dict)
 

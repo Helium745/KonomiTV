@@ -318,29 +318,6 @@ class ReservationAddRequest(BaseModel):
     program_id: str
     # 録画設定
     record_settings: RecordSettings
-    # DB に番組が存在しない場合に使う補助番組情報
-    program: ReservationAddProgram | None = None
-
-# 録画予約追加時に補助入力として渡す番組情報
-## DB に未反映で EIT[p/f] にのみ番組情報が存在する番組を予約できるようにするため、
-## EDCB への予約投入に必要な最小項目だけを定義している
-class ReservationAddProgram(BaseModel):
-    # 録画予約を追加する番組の ID (NID32736-SID1024-EID65535 の形式)
-    id: str
-    # 録画予約を追加する番組のチャンネル ID
-    channel_id: str
-    # ネットワーク ID (ONID)
-    network_id: int
-    # サービス ID (SID)
-    service_id: int
-    # イベント ID (EID)
-    event_id: int
-    # 番組名
-    title: str
-    # 番組開始時刻
-    start_time: datetime
-    # 番組の長さ (秒)
-    duration: float
 
 # 録画予約を変更する
 class ReservationUpdateRequest(BaseModel):
@@ -349,14 +326,17 @@ class ReservationUpdateRequest(BaseModel):
 
 # キーワード自動予約条件を追加する
 class ReservationConditionAddRequest(BaseModel):
+    # 条件が有効かどうか
+    is_enabled: bool = True
     # 番組検索条件
     program_search_condition: ProgramSearchCondition
     # 録画設定
     record_settings: RecordSettings
 
 # キーワード自動予約条件を変更する
-## 内容は ReservationConditionAddRequest と同じ (録画予約 ID はパスパラメータから取得するため不要)
 class ReservationConditionUpdateRequest(BaseModel):
+    # 条件が有効かどうか
+    is_enabled: bool = True
     # 番組検索条件
     program_search_condition: ProgramSearchCondition
     # 録画設定
@@ -440,34 +420,30 @@ class LiveStreamStatuses(BaseModel):
 
 # ***** 録画予約 *****
 
-# 以下は EDCB の生のデータモデルをフロントエンドが扱いやすいようモダンに整形し、KonomiTV 独自のプロパティを追加したもの
-# EDCB の生のデータモデルは数十年に及ぶ歴史的経緯により複雑怪奇であり、そのままでは非常に扱いにくい
-# KonomiTV では以下のモデルを API リクエスト/レスポンスに利用し、サーバー側で EDCB の生のデータモデルと相互に変換している
-
-# 録画予約情報
+# 録画予約情報 (mirakc schedules API ベース)
 class Reservation(BaseModel):
-    # 録画予約 ID
+    # 録画予約 ID (mirakc ProgramId: nid * 10^10 + sid * 10^5 + eid)
     id: int
     # 録画予約番組の放送チャンネル
     channel: Channel
     # 録画予約番組の情報
     program: Program
-    # 録画予約が現在進行中かどうか
+    # 録画予約が現在進行中かどうか (mirakc state == 'recording')
     is_recording_in_progress: bool
-    # 実際に録画可能かどうか: 全編録画可能 / チューナー不足のため部分的にのみ録画可能 (一部録画できない) / チューナー不足のため全編録画不可能
-    # ref: https://github.com/xtne6f/EDCB/blob/work-plus-s-240212/Common/CommonDef.h#L32-L34
-    # ref: https://github.com/xtne6f/EDCB/blob/work-plus-s-240212/Common/StructDef.h#L62
+    # 実際に録画可能かどうか: mirakc はチューナー競合を事前計算しないため常に 'Full'
     recording_availability: Literal['Full', 'Partial', 'Unavailable']
-    # コメント: EPG 予約で自動追加された予約なら "EPG自動予約" と入る
+    # コメント: キーワード自動予約で追加された予約なら "キーワード自動予約" と入る
     comment: str
-    # 録画予定のファイル名
-    ## EDCB からのレスポンスでは配列になっているが、大半の場合は 1 つしか入っていないため単一の値としている
+    # 録画予定のファイル名 (contentPath のベース名)
     scheduled_recording_file_name: str
-    # 想定録画ファイルサイズ (バイト)
-    ## EDCB の Bitrate.ini から取得したビットレート情報を基に算出した推定値
+    # 想定録画ファイルサイズ (バイト): チャンネル種別ごとの静的ビットレートテーブルから算出した推定値
     estimated_recording_file_size: int
     # 録画設定
     record_settings: RecordSettings
+    # mirakc スケジュール状態 (scheduled / tracking / recording / rescheduling / finished / failed)
+    state: str = 'scheduled'
+    # 録画失敗理由 (mirakc failedReason から取得、失敗時のみ設定)
+    failed_reason: str | None = None
 
 # 録画予約情報のリスト
 class Reservations(BaseModel):
@@ -477,6 +453,8 @@ class Reservations(BaseModel):
 # キーワード自動予約条件
 class ReservationCondition(BaseModel):
     id: int
+    # 条件が有効かどうか
+    is_enabled: bool = True
     # このキーワード自動予約条件で登録されている録画予約の数
     reservation_count: int
     # 番組検索条件
@@ -569,91 +547,14 @@ class ProgramSearchConditionDate(BaseModel):
     # 検索終了時刻 (分)
     end_minute: Annotated[int, Field(ge=0, le=59)]
 
-# 録画設定
-## 現実的にほとんど使わないため UI からは設定できない値も含まれる (録画設定変更時に意図せず設定値が抜け落ちることは避けたい)
+# 録画設定 (mirakc RecordingOptions に対応する KonomiTV 側の設定)
 class RecordSettings(BaseModel):
-    # 録画予約が有効かどうか
-    is_enabled: bool = True
-    # 録画予約の優先度: 1 ~ 5 の数値で数値が大きいほど優先度が高い
+    # チューナー優先度: 1 ~ 5 の数値 (mirakc options.priority にマップされる)
     priority: Annotated[int, Field(ge=1, le=5)] = 3
-    # 保存先の録画フォルダのパスのリスト
-    ## 空リストにするとデフォルトの録画フォルダに保存される
-    ## UI 上では単一の録画フォルダしか指定できない (複数のフォルダに同じ内容を保存するユースケースが皆無なため)
-    recording_folders: list[RecordingFolder] = []
-    # 録画開始マージン (秒) / デフォルト設定に従う場合は None
-    recording_start_margin: int | None = None
-    # 録画終了マージン (秒) / デフォルト設定に従う場合は None
-    recording_end_margin: int | None = None
-    # 録画モード: 全サービス / 全サービス (デコードなし) / 指定サービスのみ / 指定サービスのみ (デコードなし) / 視聴
-    ## 通常の用途では「指定サービスのみ」以外はまず使わない
-    ## UI 上では非表示 (新規追加時は「指定サービスのみ」で固定)
-    ## ref: https://github.com/xtne6f/EDCB/blob/work-plus-s-240212/Common/CommonDef.h#L26-L30
-    ## ref: https://github.com/xtne6f/EDCB/blob/work-plus-s-240212/Document/Readme_Mod.txt#L264-L266
-    recording_mode: Literal['AllServices', 'AllServicesWithoutDecoding', 'SpecifiedService', 'SpecifiedServiceWithoutDecoding', 'View'] = 'SpecifiedService'
-    # 字幕データを録画するかどうか (Default のとき、デフォルト設定に従う)
-    caption_recording_mode: Literal['Default', 'Enable', 'Disable'] = 'Default'
-    # データ放送を録画するかどうか (Default のとき、デフォルト設定に従う)
-    data_broadcasting_recording_mode: Literal['Default', 'Enable', 'Disable'] = 'Default'
-    # 録画後動作モード: デフォルト設定に従う / 何もしない / スタンバイ / スタンバイ (復帰後再起動) / 休止 / 休止 (復帰後再起動) / シャットダウン
-    post_recording_mode: Literal['Default', 'Nothing', 'Standby', 'StandbyAndReboot', 'Suspend', 'SuspendAndReboot', 'Shutdown'] = 'Default'
-    # 録画後に実行する bat ファイルのパス / 指定しない場合は None
-    post_recording_bat_file_path: str | None = None
-    # イベントリレーの追従を行うかどうか
-    ## UI 上では非表示 (新規追加時は True で固定)
-    is_event_relay_follow_enabled: bool = True
-    # 「ぴったり録画」(録画マージンののりしろを残さず本編のみを正確に録画する？) を行うかどうか
-    ## 番組は EPG 上の開始時刻よりも早く放送開始することがあるため、基本推奨されないらしい
-    ## UI 上では非表示 (新規追加時は False で固定)
-    is_exact_recording_enabled: bool = False
-    # 録画対象のチャンネルにワンセグ放送が含まれる場合、ワンセグ放送を別ファイルに同時録画するかどうか
-    ## UI 上では非表示 (新規追加時は False で固定)
-    is_oneseg_separate_output_enabled: bool = False
-    # 同一チャンネルで時間的に隣接した録画予約がある場合に、それらを同一の録画ファイルに続けて出力するかどうか
-    ## UI 上では非表示 (新規追加時は False で固定)
-    is_sequential_recording_in_single_file_enabled: bool = False
-    # チューナーを強制指定する際のチューナー ID / 自動選択の場合は None
-    # UI 上では非表示 (新規追加時は None で固定)
-    forced_tuner_id: Annotated[int, Field(ge=0)] | None = None
-
-# 録画フォルダ
-class RecordingFolder(BaseModel):
-    # 録画フォルダのパス
-    recording_folder_path: str
-    # 録画ファイル名テンプレート: RecName_Macro.dll によるファイル名テンプレートの文字列
-    ## None のとき、RecName_Macro.dll のデフォルト設定に従う
-    recording_file_name_template: str | None = None
-    # ワンセグ放送を別ファイルに同時録画する場合の録画フォルダかどうか
-    is_oneseg_separate_recording_folder: bool = False
-
-# 録画設定プリセット一覧
-class RecordSettingsPresets(BaseModel):
-    # グローバルデフォルト値
-    global_defaults: RecordSettingsGlobalDefaults
-    # プリセット一覧 (ID=0 のデフォルトプリセットを含む)
-    presets: list[RecordSettingsPreset]
-
-# 録画設定プリセット
-class RecordSettingsPreset(BaseModel):
-    # プリセット ID (0 がデフォルトプリセット)
-    id: int
-    # プリセット名
-    name: str
-    # このプリセットの録画設定
-    record_settings: RecordSettings
-
-# 録画設定のグローバルデフォルト値
-## EpgTimerSrv.ini の [SET] セクションから取得した、各設定の「デフォルト設定を使う」選択時に適用される実際の値
-class RecordSettingsGlobalDefaults(BaseModel):
-    # グローバルデフォルトの録画開始マージン (秒)
-    recording_start_margin: int
-    # グローバルデフォルトの録画終了マージン (秒)
-    recording_end_margin: int
-    # 字幕データ録画のグローバルデフォルト
-    caption_recording_mode: Literal['Enable', 'Disable']
-    # データ放送録画のグローバルデフォルト
-    data_broadcasting_recording_mode: Literal['Enable', 'Disable']
-    # 録画後動作のグローバルデフォルト
-    post_recording_mode: Literal['Nothing', 'Standby', 'StandbyAndReboot', 'Suspend', 'SuspendAndReboot', 'Shutdown']
+    # mirakc の pre-filters (設定しない場合は空リスト)
+    pre_filters: list[str] = []
+    # mirakc の post-filters (設定しない場合は空リスト)
+    post_filters: list[str] = []
 
 # ***** データ放送 *****
 
@@ -764,5 +665,5 @@ class VersionInformation(BaseModel):
     version: str
     latest_version: str | None
     environment: Literal['Windows', 'Linux', 'Linux-Docker', 'Linux-ARM']
-    backend: Literal['EDCB', 'Mirakurun']
+    backend: Literal['mirakc']
     encoder: Literal['FFmpeg', 'QSVEncC', 'NVEncC', 'VCEEncC', 'rkmppenc']

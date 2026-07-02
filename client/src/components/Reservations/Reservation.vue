@@ -24,18 +24,7 @@
                     <div class="reservation__priority-badge">{{ reservation.record_settings.priority }}</div>
                     <div class="reservation__priority-label">優先度</div>
                 </div>
-                <div v-if="!shouldShowProgramSearchAddButton && !reservation.is_recording_in_progress" class="reservation__toggle" @click="handleSwitchClick">
-                    <v-switch
-                        v-model="isEnabled"
-                        color="primary"
-                        density="compact"
-                        hide-details
-                        @update:model-value="handleToggleEnabled"
-                        @click="handleSwitchClick"
-                    ></v-switch>
-                    <div class="reservation__toggle-label">{{ isEnabled ? '有効' : '無効' }}</div>
-                </div>
-                <div v-else-if="!shouldShowProgramSearchAddButton" class="reservation__recording">
+                <div v-if="!shouldShowProgramSearchAddButton && reservation.is_recording_in_progress" class="reservation__recording">
                     <div class="reservation__recording-icon"></div>
                 </div>
             </div>
@@ -133,7 +122,7 @@
 </template>
 <script lang="ts" setup>
 
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 
 import Message from '@/message';
 import Reservations, { IReservation } from '@/services/Reservations';
@@ -153,8 +142,6 @@ const emit = defineEmits<{
     (e: 'added', reservation: IReservation): void;
 }>();
 
-// 有効・無効の状態を管理
-const isEnabled = ref(props.reservation.record_settings.is_enabled);
 const isUpdating = ref(false);
 const isAddingReservation = ref(false);
 const currentTime = ref(dayjs());
@@ -173,12 +160,12 @@ const isProgramSearchActionDisabled = computed(() => {
     return isPastProgram.value === true || isAddingReservation.value === true;
 });
 
-// 録画予約一覧では無効予約だけ薄くし、番組検索では終了済みの番組だけ状態を弱める
+// 番組検索では終了済みの番組だけ状態を弱める (mirakc 移行後は is_enabled なし)
 const isDisplayDisabled = computed(() => {
     if (props.isProgramSearchResult === true) {
-        return isPastProgram.value === true || isEnabled.value === false;
+        return isPastProgram.value === true;
     }
-    return isEnabled.value === false;
+    return false;
 });
 
 const programSearchActionLabel = computed(() => {
@@ -268,11 +255,6 @@ const broadcasterLogoURL = computed(() => {
     return `${Utils.api_base_url}/channels/${props.reservation.channel.id}/logo`;
 });
 
-// propsの変更を監視
-watch(() => props.reservation.record_settings.is_enabled, (newValue) => {
-    isEnabled.value = newValue;
-});
-
 onMounted(() => {
     // 放送開始・終了を跨いだまま一覧を開いていると、チップと予約追加ボタンの状態が古くなる
     currentTimeUpdateTimer = setInterval(() => {
@@ -355,37 +337,6 @@ const handleContentClick = () => {
     emit('click', props.reservation);
 };
 
-// 有効・無効の切り替え処理
-const handleToggleEnabled = async () => {
-    if (isUpdating.value) return;
-
-    isUpdating.value = true;
-    try {
-        // 録画設定を更新
-        const updatedSettings = {
-            ...props.reservation.record_settings,
-            is_enabled: isEnabled.value,
-        };
-
-        const result = await Reservations.updateReservation(props.reservation.id, updatedSettings);
-        if (result) {
-            const message = isEnabled.value
-                ? '録画予約を有効にしました。\n番組開始時刻になると自動的に録画が開始されます。'
-                : '録画予約を無効にしました。\n番組開始時刻までに再度予約を有効にしない限り、この番組は録画されません。';
-            Message.success(message);
-        } else {
-            // 失敗時は元の状態に戻す
-            isEnabled.value = props.reservation.record_settings.is_enabled;
-        }
-    } catch (error) {
-        console.error('Failed to update reservation:', error);
-        // 失敗時は元の状態に戻す
-        isEnabled.value = props.reservation.record_settings.is_enabled;
-    } finally {
-        isUpdating.value = false;
-    }
-};
-
 // 番組検索結果での追加ボタンがクリックされた時、詳細ドロワーを開く代わりに予約を追加する
 const handleAddButtonClick = async (event: Event) => {
     event.stopPropagation();
@@ -409,10 +360,7 @@ const handleAddButtonClick = async (event: Event) => {
     }
 };
 
-// スイッチ領域のクリック時の処理（ドロワー開閉を防止）
-const handleSwitchClick = (event: Event) => {
-    event.stopPropagation();
-};
+
 
 </script>
 <style lang="scss" scoped>

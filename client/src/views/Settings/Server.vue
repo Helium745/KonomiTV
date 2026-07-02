@@ -21,43 +21,18 @@
                 <span class="ml-2">全般</span>
             </div>
             <div class="settings__item">
-                <div class="settings__item-heading">利用するバックエンド</div>
+                <div class="settings__item-heading">mirakc の HTTP API の URL</div>
                 <div class="settings__item-label">
-                    EDCB・Mirakurun のいずれかを選択してください。<br>
-                    バックエンドに Mirakurun が選択されているときは、録画予約機能は利用できません。<br>
-                </div>
-                <v-select class="settings__item-form" color="primary" variant="outlined" hide-details
-                    :density="is_form_dense ? 'compact' : 'default'"
-                    :items="['EDCB', 'Mirakurun']" v-model="server_settings.general.backend">
-                </v-select>
-            </div>
-            <div class="settings__item">
-                <div class="settings__item-heading">EDCB (EpgTimerNW) の TCP API の URL</div>
-                <div class="settings__item-label">
-                    バックエンドに EDCB が選択されているときに利用されます。<br>
-                    tcp://edcb-namedpipe/ と指定すると、TCP API の代わりに名前付きパイプを使って通信します (ローカルのみ)。<br>
+                    KonomiTV は mirakc 専用です。チャンネル受信・録画予約に mirakc を使用します。<br>
+                    Mirakurun は録画予約に必要な API を提供していないため使用できません。<br>
                 </div>
                 <div class="settings__item-label mt-1">
                     一部 Windows 環境では localhost の名前解決が遅いため、ストリーミング開始までの待機時間が長くなる場合があります。
-                    EDCB と同じ PC に KonomiTV をインストールしている場合、localhost ではなく 127.0.0.1 の利用を推奨します。<br>
+                    mirakc と同じ PC に KonomiTV をインストールしている場合、localhost ではなく 127.0.0.1 の利用を推奨します。<br>
                 </div>
                 <v-text-field class="settings__item-form" color="primary" variant="outlined" hide-details
                     :density="is_form_dense ? 'compact' : 'default'"
-                    v-model="server_settings.general.edcb_url">
-                </v-text-field>
-            </div>
-            <div class="settings__item">
-                <div class="settings__item-heading">Mirakurun / mirakc の HTTP API の URL</div>
-                <div class="settings__item-label">
-                    バックエンドに Mirakurun が選択されているときに利用されます。<br>
-                </div>
-                <div class="settings__item-label mt-1">
-                    一部 Windows 環境では localhost の名前解決が遅いため、ストリーミング開始までの待機時間が長くなる場合があります。
-                    Mirakurun / mirakc と同じ PC に KonomiTV をインストールしている場合、localhost ではなく 127.0.0.1 の利用を推奨します。<br>
-                </div>
-                <v-text-field class="settings__item-form" color="primary" variant="outlined" hide-details
-                    :density="is_form_dense ? 'compact' : 'default'"
-                    v-model="server_settings.general.mirakurun_url">
+                    v-model="server_settings.general.mirakc_url">
                 </v-text-field>
             </div>
             <div class="settings__item">
@@ -85,7 +60,7 @@
             <div class="settings__item">
                 <div class="settings__item-heading">番組情報の更新間隔 (分)</div>
                 <div class="settings__item-label">
-                    番組情報を EDCB または Mirakurun / mirakc から取得する間隔を設定します。デフォルトは 5 (分) です。<br>
+                    番組情報を mirakc から取得する間隔を設定します。デフォルトは 5 (分) です。<br>
                 </div>
                 <v-slider class="settings__item-form" color="primary" show-ticks="always" thumb-label hide-details
                     :min="0.5" :max="60" :step="0.5"
@@ -147,20 +122,6 @@
             <div class="settings__content-heading mt-6">
                 <Icon icon="fluent:tv-20-filled" width="22px" />
                 <span class="ml-2">テレビのライブストリーミング</span>
-            </div>
-            <div class="settings__item settings__item--switch">
-                <label class="settings__item-heading" for="always_receive_tv_from_mirakurun">常に Mirakurun / mirakc から放送波を受信する</label>
-                <label class="settings__item-label" for="always_receive_tv_from_mirakurun">
-                    利用するバックエンドが EDCB のとき、常に Mirakurun / mirakc から放送波を受信するかを設定します。
-                    バックエンドに Mirakurun が選択されているときは効果がありません。<br>
-                </label>
-                <label class="settings__item-label mt-1" for="always_receive_tv_from_mirakurun">
-                    KonomiTV から EDCB と Mirakurun / mirakc 両方にアクセスできる必要があります。<br>
-                    EDCB はチューナー起動やチャンネル切り替えに時間がかかるため、Mirakurun / mirakc が利用できる環境であれば、この設定を有効にするとより快適に使えます。<br>
-                </label>
-                <v-switch class="settings__item-switch" color="primary" id="always_receive_tv_from_mirakurun" hide-details
-                    v-model="server_settings.general.always_receive_tv_from_mirakurun">
-                </v-switch>
             </div>
             <div class="settings__item">
                 <div class="settings__item-heading">チャンネル表示・選局で優先するエリア (地デジ)</div>

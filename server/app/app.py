@@ -43,7 +43,7 @@ from app.routers import (
     VideoStreamsRouter,
 )
 from app.streams.LiveStream import LiveStream
-from app.utils.edcb.EDCBTuner import EDCBTuner
+from app.tasks.AutoReservationTask import AutoReservationTask
 from app.utils.FastAPITaskUtil import repeat_every
 
 
@@ -219,9 +219,10 @@ tortoise.contrib.fastapi.register_tortoise(
 
 # サーバーの起動時に実行する
 recorded_scan_task: RecordedScanTask | None = None
+auto_reservation_task: AutoReservationTask | None = None
 @app.on_event('startup')
 async def Startup():
-    global recorded_scan_task
+    global recorded_scan_task, auto_reservation_task
 
     # チャンネル情報を更新
     await Channel.update()
@@ -242,6 +243,10 @@ async def Startup():
     # ref: https://docs.astral.sh/ruff/rules/asyncio-dangling-task/
     recorded_scan_task = RecordedScanTask()
     await recorded_scan_task.start()
+
+    # キーワード自動予約タスクを開始
+    auto_reservation_task = AutoReservationTask()
+    await auto_reservation_task.start()
 
 # サーバー設定で指定された時間 (デフォルト: 15分) ごとに1回、チャンネル情報と番組情報を更新する
 # チャンネル情報は頻繁に変わるわけではないけど、手動で再起動しなくても自動で変更が適用されてほしい
@@ -278,9 +283,11 @@ async def Shutdown():
     for live_stream in LiveStream.getAllLiveStreams():
         live_stream.setStatus('Offline', 'ライブストリームは Offline です。', True)
 
-    # 全てのチューナーインスタンスを終了する (EDCB バックエンドのみ)
-    if CONFIG.general.backend == 'EDCB':
-        await EDCBTuner.closeAll()
+    # キーワード自動予約タスクを停止
+    global auto_reservation_task
+    if auto_reservation_task is not None:
+        await auto_reservation_task.stop()
+        auto_reservation_task = None
 
     # 録画フォルダ監視タスクを停止
     global recorded_scan_task

@@ -9,6 +9,7 @@ import { IRecordSettings } from '@/services/Reservations';
  */
 export interface IReservationCondition {
     id: number;
+    is_enabled: boolean;
     reservation_count: number;
     program_search_condition: IProgramSearchCondition;
     record_settings: IRecordSettings;
@@ -26,6 +27,7 @@ export interface IReservationConditions {
  * キーワード自動予約条件追加リクエスト
  */
 export interface IReservationConditionAddRequest {
+    is_enabled?: boolean;
     program_search_condition: IProgramSearchCondition;
     record_settings: IRecordSettings;
 }
@@ -34,6 +36,7 @@ export interface IReservationConditionAddRequest {
  * キーワード自動予約条件更新リクエスト
  */
 export interface IReservationConditionUpdateRequest {
+    is_enabled?: boolean;
     program_search_condition: IProgramSearchCondition;
     record_settings: IRecordSettings;
 }
@@ -52,7 +55,7 @@ class ReservationConditions {
 
         if (response.type === 'error') {
             switch (response.data.detail) {
-                case 'This API is only available when the backend is EDCB':
+                case 'Reservation conditions API is being reimplemented. Please wait for the next update.':
                     APIClient.showGenericError(response, 'キーワード自動予約機能は EDCB バックエンド選択時のみ利用できます。');
                     break;
                 case 'Failed to get the list of reserve conditions':
@@ -78,7 +81,7 @@ class ReservationConditions {
 
         if (response.type === 'error') {
             switch (response.data.detail) {
-                case 'This API is only available when the backend is EDCB':
+                case 'Reservation conditions API is being reimplemented. Please wait for the next update.':
                     APIClient.showGenericError(response, 'キーワード自動予約機能は EDCB バックエンド選択時のみ利用できます。');
                     break;
                 case 'Specified reservation_condition_id was not found':
@@ -110,7 +113,7 @@ class ReservationConditions {
 
         if (response.type === 'error') {
             switch (response.data.detail) {
-                case 'This API is only available when the backend is EDCB':
+                case 'Reservation conditions API is being reimplemented. Please wait for the next update.':
                     APIClient.showGenericError(response, 'キーワード自動予約機能は EDCB バックエンド選択時のみ利用できます。');
                     break;
                 case 'Failed to register the reserve condition':
@@ -147,7 +150,7 @@ class ReservationConditions {
 
         if (response.type === 'error') {
             switch (response.data.detail) {
-                case 'This API is only available when the backend is EDCB':
+                case 'Reservation conditions API is being reimplemented. Please wait for the next update.':
                     APIClient.showGenericError(response, 'キーワード自動予約機能は EDCB バックエンド選択時のみ利用できます。');
                     break;
                 case 'Specified reservation_condition_id was not found':
@@ -176,7 +179,7 @@ class ReservationConditions {
 
         if (response.type === 'error') {
             switch (response.data.detail) {
-                case 'This API is only available when the backend is EDCB':
+                case 'Reservation conditions API is being reimplemented. Please wait for the next update.':
                     APIClient.showGenericError(response, 'キーワード自動予約機能は EDCB バックエンド選択時のみ利用できます。');
                     break;
                 case 'Specified reservation_condition_id was not found':

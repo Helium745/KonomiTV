@@ -5,33 +5,12 @@ import { IProgram } from '@/services/Programs';
 
 
 /**
- * 録画設定
+ * 録画設定 (mirakc RecordingOptions ベース)
  */
 export interface IRecordSettings {
-    is_enabled: boolean;
     priority: 1 | 2 | 3 | 4 | 5;
-    recording_folders: IRecordingFolder[];
-    recording_start_margin: number | null;
-    recording_end_margin: number | null;
-    recording_mode: 'AllServices' | 'AllServicesWithoutDecoding' | 'SpecifiedService' | 'SpecifiedServiceWithoutDecoding' | 'View';
-    caption_recording_mode: 'Default' | 'Enable' | 'Disable';
-    data_broadcasting_recording_mode: 'Default' | 'Enable' | 'Disable';
-    post_recording_mode: 'Default' | 'Nothing' | 'Standby' | 'StandbyAndReboot' | 'Suspend' | 'SuspendAndReboot' | 'Shutdown';
-    post_recording_bat_file_path: string | null;
-    is_event_relay_follow_enabled: boolean;
-    is_exact_recording_enabled: boolean;
-    is_oneseg_separate_output_enabled: boolean;
-    is_sequential_recording_in_single_file_enabled: boolean;
-    forced_tuner_id: number | null;
-}
-
-/**
- * 録画フォルダの設定
- */
-export interface IRecordingFolder {
-    recording_folder_path: string;
-    recording_file_name_template: string | null;
-    is_oneseg_separate_recording_folder: boolean;
+    pre_filters: string[];
+    post_filters: string[];
 }
 
 /**
@@ -47,6 +26,8 @@ export interface IReservation {
     scheduled_recording_file_name: string;
     estimated_recording_file_size: number;
     record_settings: IRecordSettings;
+    state: string;
+    failed_reason: string | null;
 }
 
 /**
@@ -58,26 +39,11 @@ export interface IReservations {
 }
 
 /**
- * 録画予約追加時に補助入力として渡す番組情報
- */
-export interface IReservationAddProgram {
-    id: string;
-    channel_id: string;
-    network_id: number;
-    service_id: number;
-    event_id: number;
-    title: string;
-    start_time: string;
-    duration: number;
-}
-
-/**
  * 録画予約追加リクエスト
  */
 export interface IReservationAddRequest {
     program_id: string;
     record_settings: IRecordSettings;
-    program?: IReservationAddProgram | null;
 }
 
 /**
@@ -88,54 +54,12 @@ export interface IReservationUpdateRequest {
 }
 
 /**
- * 録画設定プリセット一覧 API のレスポンス
- */
-export interface IRecordSettingsPresets {
-    global_defaults: IRecordSettingsGlobalDefaults;
-    presets: IRecordSettingsPreset[];
-}
-
-/**
- * 録画設定プリセット
- */
-export interface IRecordSettingsPreset {
-    id: number;
-    name: string;
-    record_settings: IRecordSettings;
-}
-
-/**
- * 録画設定のグローバルデフォルト値
- * EpgTimerSrv.ini の [SET] セクションから取得した、各設定の「デフォルト設定を使う」選択時に適用される実際の値
- */
-export interface IRecordSettingsGlobalDefaults {
-    recording_start_margin: number;
-    recording_end_margin: number;
-    caption_recording_mode: 'Enable' | 'Disable';
-    data_broadcasting_recording_mode: 'Enable' | 'Disable';
-    post_recording_mode: 'Nothing' | 'Standby' | 'StandbyAndReboot' | 'Suspend' | 'SuspendAndReboot' | 'Shutdown';
-}
-
-/**
- * 録画設定のデフォルト値 (フォールバック用)
- * プリセット API の取得に失敗した場合に使用する
+ * 録画設定のデフォルト値
  */
 export const IRecordSettingsDefault: IRecordSettings = {
-    is_enabled: true,
-    priority: 2,
-    recording_folders: [],
-    recording_start_margin: null,
-    recording_end_margin: null,
-    recording_mode: 'SpecifiedService',
-    caption_recording_mode: 'Default',
-    data_broadcasting_recording_mode: 'Default',
-    post_recording_mode: 'Default',
-    post_recording_bat_file_path: null,
-    is_event_relay_follow_enabled: true,
-    is_exact_recording_enabled: false,
-    is_oneseg_separate_output_enabled: false,
-    is_sequential_recording_in_single_file_enabled: false,
-    forced_tuner_id: null,
+    priority: 3,
+    pre_filters: [],
+    post_filters: [],
 };
 
 
@@ -185,19 +109,17 @@ class Reservations {
     static async addReservation(
         program_id: string,
         record_settings: IRecordSettings,
-        program: IReservationAddProgram | null = null,
     ): Promise<boolean> {
         const request_data: IReservationAddRequest = {
             program_id,
             record_settings,
-            program,
         };
 
         const response = await APIClient.post('/recording/reservations', request_data);
 
         if (response.type === 'error') {
             switch (response.data.detail) {
-                case 'This API is only available when the backend is EDCB':
+                case 'Reservation conditions API is being reimplemented. Please wait for the next update.':
                     APIClient.showGenericError(response, '録画予約機能は EDCB バックエンド選択時のみ利用できます。');
                     break;
                 case 'Specified program was not found':
@@ -249,7 +171,7 @@ class Reservations {
 
         if (response.type === 'error') {
             switch (response.data.detail) {
-                case 'This API is only available when the backend is EDCB':
+                case 'Reservation conditions API is being reimplemented. Please wait for the next update.':
                     APIClient.showGenericError(response, '録画予約機能は EDCB バックエンド選択時のみ利用できます。');
                     break;
                 case 'Specified reservation_id was not found':
@@ -278,7 +200,7 @@ class Reservations {
 
         if (response.type === 'error') {
             switch (response.data.detail) {
-                case 'This API is only available when the backend is EDCB':
+                case 'Reservation conditions API is being reimplemented. Please wait for the next update.':
                     APIClient.showGenericError(response, '録画予約機能は EDCB バックエンド選択時のみ利用できます。');
                     break;
                 case 'Specified reservation_id was not found':
@@ -298,37 +220,10 @@ class Reservations {
     }
 
     /**
-     * 録画設定プリセット一覧を取得する
-     * EpgTimerSrv.ini から録画設定プリセットとグローバルデフォルト値を返す
-     * @returns 録画設定プリセット一覧、取得失敗時は null
-     */
-    static async fetchRecordingPresets(): Promise<IRecordSettingsPresets | null> {
-        const response = await APIClient.get<IRecordSettingsPresets>('/recording/presets');
-
-        if (response.type === 'error') {
-            APIClient.showGenericError(response, '録画設定プリセット一覧の取得に失敗しました。');
-            return null;
-        }
-
-        return response.data;
-    }
-
-    /**
-     * デフォルトの録画設定を取得する
-     * プリセット API から ID=0 のデフォルトプリセットを取得し、失敗時は IRecordSettingsDefault にフォールバックする
+     * デフォルトの録画設定を返す (mirakc 移行後はプリセット API が不要のためデフォルト値を直接返す)
      * @returns デフォルトの録画設定
      */
-    static async fetchDefaultRecordSettings(): Promise<IRecordSettings> {
-        const presets = await Reservations.fetchRecordingPresets();
-        if (presets !== null) {
-            // ID=0 のデフォルトプリセットを探す
-            const defaultPreset = presets.presets.find(preset => preset.id === 0);
-            if (defaultPreset) {
-                return defaultPreset.record_settings;
-            }
-        }
-
-        // プリセット API の取得に失敗した場合はハードコードされたデフォルト値にフォールバック
+    static fetchDefaultRecordSettings(): IRecordSettings {
         return structuredClone(IRecordSettingsDefault);
     }
 }

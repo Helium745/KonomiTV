@@ -183,7 +183,7 @@ class Programs {
 
         if (response.type === 'error') {
             switch (response.data.detail) {
-                case 'This API is only available when the backend is EDCB':
+                case 'Reservation conditions API is being reimplemented. Please wait for the next update.':
                     APIClient.showGenericError(response, '番組検索機能は EDCB バックエンド選択時のみ利用できます。');
                     break;
                 default:

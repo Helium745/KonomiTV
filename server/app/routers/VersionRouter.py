@@ -55,7 +55,7 @@ async def VersionInformationAPI():
         'version': VERSION,
         'latest_version': latest_version,
         'environment': environment,
-        'backend': Config().general.backend,
+        'backend': 'mirakc',
         'encoder': Config().general.encoder,
     }
     return result

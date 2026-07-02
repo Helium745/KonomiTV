@@ -167,10 +167,8 @@ export default defineComponent({
         // サーバー設定がまだ取得されていない場合は EDCB と判定しない
         // (デフォルト値が 'EDCB' のため、未取得状態で誤って true を返すと Mirakurun バックエンドでも予約 API が呼ばれてしまう)
         isEDCBBackend(): boolean {
-            if (this.serverSettingsStore.is_loaded !== true) {
-                return false;
-            }
-            return this.serverSettingsStore.server_settings.general.backend === 'EDCB';
+            // mirakc バックエンドのみサポート。サーバー設定が取得済みであれば予約操作を有効化する
+            return this.serverSettingsStore.is_loaded === true;
         },
 
         // 現在の番組が録画中かどうか
@@ -313,11 +311,10 @@ export default defineComponent({
             }
             this.is_starting_recording = true;
             try {
-                const defaultSettings = await Reservations.fetchDefaultRecordSettings();
+                const defaultSettings = Reservations.fetchDefaultRecordSettings();
                 const result = await Reservations.addReservation(
                     programPresent.id,
                     defaultSettings,
-                    programPresent,
                 );
                 // 予約状態を再チェックして UI を更新
                 // 予約追加に失敗した場合も、外部で既に予約済みの可能性があるため状態を再取得する

@@ -57,7 +57,7 @@
 </template>
 <script lang="ts" setup>
 
-import { computed, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import Breadcrumbs from '@/components/Breadcrumbs.vue';
@@ -296,10 +296,6 @@ const createMockReservation = (program: IProgram): IReservation => {
         return reservation;
     }
 
-    const recordSettings = defaultRecordSettings.value !== null
-        ? structuredClone(toRaw(defaultRecordSettings.value))
-        : null;
-
     return {
         id: -1,
         channel: channelMap.value.get(program.channel_id) ?? createFallbackChannel(program),
@@ -309,7 +305,9 @@ const createMockReservation = (program: IProgram): IReservation => {
         comment: '',
         scheduled_recording_file_name: '',
         estimated_recording_file_size: 0,
-        record_settings: recordSettings ?? structuredClone(toRaw(IRecordSettingsDefault)),
+        record_settings: structuredClone(IRecordSettingsDefault),
+        state: 'scheduled',
+        failed_reason: null,
     };
 };
 
@@ -328,9 +326,6 @@ onMounted(async () => {
         userStore.fetchUser(),
         channelsStore.update(),
         updateReservedProgramIds(),
-        Reservations.fetchDefaultRecordSettings().then((recordSettings) => {
-            defaultRecordSettings.value = recordSettings;
-        }),
     ]);
 
     syncConditionFromRoute();

@@ -2,23 +2,17 @@
 import json
 import re
 from datetime import datetime, timedelta
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, Literal
 
-import ariblib.constants
-from fastapi import APIRouter, Body, Depends, Query
+from fastapi import APIRouter, Body, Query
 from pydantic import TypeAdapter
 from tortoise import connections
 
-from app import logging, schemas
-from app.config import Config
+from app import schemas
 from app.constants import JST
 from app.models.Channel import Channel
-from app.routers.ReservationConditionsRouter import EncodeEDCBSearchKeyInfo
-from app.routers.ReservationsRouter import GetCtrlCmdUtil
+from app.models.Program import Program
 from app.utils import NormalizeToJSTDatetime, ParseDatetimeStringToJST
-from app.utils.edcb import EventInfo, ReserveDataRequired, SearchKeyInfo
-from app.utils.edcb.CtrlCmdUtil import CtrlCmdUtil
-from app.utils.edcb.EDCBUtil import EDCBUtil
 from app.utils.TSInformation import TSInformation
 
 
@@ -111,172 +105,6 @@ def GetTimeTableSubchannelGroupKey(channel_row: dict[str, Any]) -> TimeTableSubc
     return None
 
 
-def DecodeEDCBEventInfo(event_info: EventInfo) -> schemas.Program:
-    """
-    EDCB の EventInfo オブジェクトを schemas.Program オブジェクトに変換する
-    Program.updateFromEDCB() での変換処理を移植したもの
-
-    Args:
-        event_info (EventInfo): EDCB の EventInfo オブジェクト
-
-    Returns:
-        schemas.Program: schemas.Program オブジェクト
-    """
-
-    # 番組タイトル・番組概要
-    title: str = ''
-    description: str = ''
-    if 'short_info' in event_info:
-        title = TSInformation.formatString(event_info['short_info']['event_name']).strip()
-        description = TSInformation.formatString(event_info['short_info']['text_char']).strip()
-
-    # 番組詳細
-    detail: dict[str, str] = {}
-    if 'ext_info' in event_info:
-
-        # 番組詳細テキストから取得した、見出しと本文の辞書ごとに
-        for head, text in EDCBUtil.parseProgramExtendedText(event_info['ext_info']['text_char']).items():
-
-            # 見出しと本文
-            ## 見出しのみ ariblib 側で意図的に重複防止のためのタブ文字付加が行われる場合があるため、
-            ## strip() では明示的に半角スペースと改行のみを指定している
-            head_hankaku = TSInformation.formatString(head).replace('◇', '').strip(' \r\n')  # ◇ を取り除く
-            ## ないとは思うが、万が一この状態で見出しが衝突しうる場合は、見出しの後ろにタブ文字を付加する
-            while head_hankaku in detail.keys():
-                head_hankaku += '\t'
-            ## 見出しが空の場合、固定で「番組内容」としておく
-            if head_hankaku == '':
-                head_hankaku = '番組内容'
-            text_hankaku = TSInformation.formatString(text).strip()
-            detail[head_hankaku] = text_hankaku
-
-            # 番組概要が空の場合、番組詳細の最初の本文を概要として使う
-            # 空でまったく情報がないよりかは良いはず
-            if description.strip() == '':
-                description = text_hankaku
-
-    # 番組開始時刻
-    ## 万が一取得できなかった場合は 1970/1/1 9:00 とする
-    start_time = NormalizeToJSTDatetime(event_info.get('start_time', datetime(1970, 1, 1, 9, tzinfo=JST)))
-
-    # 番組終了時刻
-    ## 終了時間未定の場合、とりあえず5分とする
-    end_time = start_time + timedelta(seconds=event_info.get('duration_sec', 300))
-
-    # schemas.Program オブジェクトを作成
-    program = schemas.Program(
-        id = f'NID{event_info["onid"]}-SID{event_info["sid"]:03d}-EID{event_info["eid"]}',
-        channel_id = f'NID{event_info["onid"]}-SID{event_info["sid"]:03d}',
-        network_id = event_info['onid'],
-        service_id = event_info['sid'],
-        event_id = event_info['eid'],
-        title = title,
-        description = description,
-        detail = detail,
-        start_time = start_time,
-        end_time = end_time,
-        duration = (end_time - start_time).total_seconds(),
-        is_free = bool(event_info['free_ca_flag'] == 0),
-        genres = [],
-        video_type = None,
-        video_codec = None,
-        video_resolution = None,
-        primary_audio_type = '',
-        primary_audio_language = '',
-        primary_audio_sampling_rate = '',
-        secondary_audio_type = None,
-        secondary_audio_language = None,
-        secondary_audio_sampling_rate = None,
-    )
-
-    # ジャンル
-    ## 数字だけでは開発中の視認性が低いのでテキストに変換する
-    program.genres = []  # デフォルト値
-    content_info = event_info.get('content_info')
-    if content_info is not None:
-        for content_data in content_info['nibble_list']:  # ジャンルごとに
-
-            # 大まかなジャンルを取得
-            genre_tuple = ariblib.constants.CONTENT_TYPE.get(content_data['content_nibble'] >> 8)
-            if genre_tuple is not None:
-
-                # major … 大分類
-                # middle … 中分類
-                genre_dict: schemas.Genre = {
-                    'major': genre_tuple[0].replace('／', '・'),
-                    'middle': genre_tuple[1].get(content_data['content_nibble'] & 0xf, '未定義').replace('／', '・'),
-                }
-
-                # BS/地上デジタル放送用番組付属情報がジャンルに含まれている場合、user_nibble から値を取得して書き換える
-                # たとえば「中止の可能性あり」や「延長の可能性あり」といった情報が取れる
-                if genre_dict['major'] == '拡張':
-                    if genre_dict['middle'] == 'BS/地上デジタル放送用番組付属情報':
-                        user_nibble = (content_data['user_nibble'] >> 8 << 4) | (content_data['user_nibble'] & 0xf)
-                        genre_dict['middle'] = ariblib.constants.USER_TYPE.get(user_nibble, '未定義')
-                    # 「拡張」はあるがBS/地上デジタル放送用番組付属情報でない場合はなんの値なのかわからないのでパス
-                    else:
-                        continue
-
-                # ジャンルを追加
-                program.genres.append(genre_dict)
-
-    # 映像情報
-    ## テキストにするために ariblib.constants や TSInformation の値を使う
-    program.video_type = None
-    program.video_codec = None
-    program.video_resolution = None
-    component_info = event_info.get('component_info')
-    if component_info is not None:
-        ## 映像の種類
-        component_types = ariblib.constants.COMPONENT_TYPE.get(component_info['stream_content'])
-        if component_types is not None:
-            program.video_type = component_types.get(component_info['component_type'])
-        ## 映像のコーデック
-        program.video_codec = TSInformation.STREAM_CONTENT.get(component_info['stream_content'])
-        ## 映像の解像度
-        program.video_resolution = TSInformation.COMPONENT_TYPE.get(component_info['component_type'])
-
-    # 音声情報
-    program.primary_audio_type = ''
-    program.primary_audio_language = ''
-    program.primary_audio_sampling_rate = ''
-    program.secondary_audio_type = None
-    program.secondary_audio_language = None
-    program.secondary_audio_sampling_rate = None
-    audio_info = event_info.get('audio_info')
-    if audio_info is not None and len(audio_info['component_list']) > 0:
-
-        ## 主音声
-        audio_component_info = audio_info['component_list'][0]
-        program.primary_audio_type = ariblib.constants.COMPONENT_TYPE[0x02].get(audio_component_info['component_type'], '')
-        program.primary_audio_sampling_rate = ariblib.constants.SAMPLING_RATE.get(audio_component_info['sampling_rate'], '')
-        ## 2021/09 現在の EDCB では言語コードが取得できないため、日本語か英語で固定する
-        ## EpgDataCap3 のパーサー止まりで EDCB 側では取得していないらしい
-        program.primary_audio_language = '日本語'
-        ## デュアルモノのみ
-        if program.primary_audio_type == '1/0+1/0モード(デュアルモノ)':
-            if audio_component_info['es_multi_lingual_flag'] != 0:  # デュアルモノ時の多言語フラグ
-                program.primary_audio_language += '+英語'
-            else:
-                program.primary_audio_language += '+副音声'
-
-        # 副音声（存在する場合）
-        if len(audio_info['component_list']) > 1:
-            audio_component_info = audio_info['component_list'][1]
-            program.secondary_audio_type = ariblib.constants.COMPONENT_TYPE[0x02].get(audio_component_info['component_type'], '')
-            program.secondary_audio_sampling_rate = ariblib.constants.SAMPLING_RATE.get(audio_component_info['sampling_rate'], '')
-            ## 2021/09 現在の EDCB では言語コードが取得できないため、副音声で固定する
-            ## 英語かもしれないし解説かもしれない
-            program.secondary_audio_language = '副音声'
-            ## デュアルモノのみ
-            if program.secondary_audio_type == '1/0+1/0モード(デュアルモノ)':
-                if audio_component_info['es_multi_lingual_flag'] != 0:  # デュアルモノ時の多言語フラグ
-                    program.secondary_audio_language += '+英語'
-                else:
-                    program.secondary_audio_language += '+副音声'
-
-    return program
-
 
 @router.post(
     '/search',
@@ -286,76 +114,138 @@ def DecodeEDCBEventInfo(event_info: EventInfo) -> schemas.Program:
 )
 async def ProgramSearchAPI(
     program_search_condition: Annotated[schemas.ProgramSearchCondition, Body(description='番組検索条件。')],
-    edcb: Annotated[CtrlCmdUtil, Depends(GetCtrlCmdUtil)],
 ):
     """
-    番組情報を検索する。
+    番組情報を検索する。KonomiTV の番組 DB (mirakc から取得済み) を対象に検索する。
     """
 
-    # schemas.ProgramSearchCondition オブジェクトを SearchKeyInfo オブジェクトに変換
-    search_key_info = await EncodeEDCBSearchKeyInfo(program_search_condition, edcb)
+    import re as _re
+    from datetime import datetime
 
-    # EDCB の EPG ストアに保存されているすべての番組情報を検索
-    ## 過去番組は検索対象外
-    event_info_list: list[EventInfo] | None = await edcb.sendSearchPg([cast(SearchKeyInfo, search_key_info)])
-    if event_info_list is None:
-        # None が返ってきた場合は空のリストを返す
-        return schemas.Programs(total=0, programs=[])
-
-    # KonomiTV で管理対象の視聴可能チャンネルだけを検索結果として返す
-    ## EDCB の検索結果はワンセグや KonomiTV では除外しているチャンネル
-    ## (Ch: 042 などの基本イベント共有しかしてないサブチャンネルを含む) も返しうるが、
-    ## クライアント側で整合性を合わせるのが困難になるため、API 側で事前に除外してから返す
-    channel_rows = await Channel.filter(is_watchable=True).values(
-        'id',
-        'network_id',
-        'transport_stream_id',
-        'service_id',
-    )
-    channel_ids_by_service_triplet = {
-        (
-            channel_row['network_id'],
-            channel_row['transport_stream_id'],
-            channel_row['service_id'],
-        ): channel_row['id']
-        for channel_row in channel_rows
-        if channel_row['transport_stream_id'] is not None
-    }
-
-    # EDCB は検索タイミングや EPG 更新状態によって終了済み番組を返すことがあるため、放送開始前・放送中番組に絞る
     now = datetime.now(JST)
-    programs: list[schemas.Program] = []
-    for event_info in event_info_list:
-        service_key = (event_info['onid'], event_info['tsid'], event_info['sid'])
-        channel_id = channel_ids_by_service_triplet.get(service_key)
 
-        # DB に存在しないサービスは、KonomiTV 上でロゴ表示や予約追加の対象にできないので検索結果から除外する
-        if channel_id is None:
-            continue
+    # 対象チャンネルの絞り込み
+    if program_search_condition.service_ranges is not None:
+        service_filter = {(r.network_id, r.service_id) for r in program_search_condition.service_ranges}
+        channel_ids = [
+            ch.id for ch in await Channel.filter(is_watchable=True).values_list('id', 'network_id', 'service_id')  # type: ignore[misc]
+            if (ch[1], ch[2]) in service_filter
+        ]
+        programs_qs = Program.filter(channel_id__in=channel_ids, end_time__gt=now)
+    else:
+        programs_qs = Program.filter(channel_id__in=[
+            ch.id for ch in await Channel.filter(is_watchable=True).only('id')
+        ], end_time__gt=now)
 
-        # イベント共有で別サービス側が主番組を指している場合は、Program.updateFromEDCB() と同じく副側を除外する
-        group_info = event_info.get('event_group_info')
-        if group_info is not None and len(group_info['event_data_list']) == 1:
-            primary_event = group_info['event_data_list'][0]
-            is_shared_event_side = (
-                primary_event['onid'] != event_info['onid'] or
-                primary_event['tsid'] != event_info['tsid'] or
-                primary_event['sid'] != event_info['sid'] or
-                primary_event['eid'] != event_info['eid']
-            )
-            if is_shared_event_side is True:
+    # 有料/無料絞り込み
+    if program_search_condition.broadcast_type == 'FreeOnly':
+        programs_qs = programs_qs.filter(is_free=True)
+    elif program_search_condition.broadcast_type == 'PaidOnly':
+        programs_qs = programs_qs.filter(is_free=False)
+
+    # 番組長の絞り込み
+    if program_search_condition.duration_range_min is not None:
+        programs_qs = programs_qs.filter(duration__gte=program_search_condition.duration_range_min * 60.0)
+    if program_search_condition.duration_range_max is not None:
+        programs_qs = programs_qs.filter(duration__lte=program_search_condition.duration_range_max * 60.0)
+
+    programs = await programs_qs.order_by('start_time').prefetch_related('channel')
+
+    # キーワードフィルター (Python 側)
+    keyword = program_search_condition.keyword.strip()
+    exclude_keyword = program_search_condition.exclude_keyword.strip()
+    results: list[schemas.Program] = []
+    for program in programs:
+        # キーワードマッチ
+        if keyword:
+            targets = [program.title] if program_search_condition.is_title_only else [program.title, program.description]
+            if program_search_condition.is_regex_search_enabled:
+                flags = 0 if program_search_condition.is_case_sensitive else _re.IGNORECASE
+                matched = any(_re.search(keyword, t, flags) for t in targets)
+            elif program_search_condition.is_case_sensitive:
+                matched = any(keyword in t for t in targets)
+            else:
+                matched = any(keyword.lower() in t.lower() for t in targets)
+            if not matched:
                 continue
 
-        program = DecodeEDCBEventInfo(event_info)
-        if program.end_time <= now:
-            continue
+        # 除外キーワード
+        if exclude_keyword:
+            targets = [program.title] if program_search_condition.is_title_only else [program.title, program.description]
+            if program_search_condition.is_case_sensitive:
+                excluded = any(exclude_keyword in t for t in targets)
+            else:
+                excluded = any(exclude_keyword.lower() in t.lower() for t in targets)
+            if excluded:
+                continue
 
-        # DB 上のチャンネル ID を使い、KonomiTV のチャンネル一覧・ロゴ・予約表示の参照先を一致させる
-        program.channel_id = channel_id
-        programs.append(program)
+        # ジャンル絞り込み (major/middle でマッチ)
+        if program_search_condition.genre_ranges is not None:
+            genre_match = any(
+                any(g['major'] == r['major'] and (not r.get('middle') or g['middle'] == r['middle'])
+                    for r in program_search_condition.genre_ranges)
+                for g in program.genres
+            )
+            if program_search_condition.is_exclude_genre_ranges:
+                if genre_match:
+                    continue
+            else:
+                if not genre_match:
+                    continue
 
-    return schemas.Programs(total=len(programs), programs=programs)
+        # 放送日時範囲絞り込み
+        if program_search_condition.date_ranges is not None:
+            start_jst = program.start_time.astimezone(JST)
+            day = start_jst.weekday()  # 0=月 → 6=日 (Python) → 変換: 月=1 … 日=0 (JS/ARIB)
+            js_day = (day + 1) % 7
+            h, m = start_jst.hour, start_jst.minute
+            date_match = False
+            for dr in program_search_condition.date_ranges:
+                start_mins = dr.start_day_of_week * 1440 + dr.start_hour * 60 + dr.start_minute
+                end_mins = dr.end_day_of_week * 1440 + dr.end_hour * 60 + dr.end_minute
+                prog_mins = js_day * 1440 + h * 60 + m
+                if start_mins <= end_mins:
+                    if start_mins <= prog_mins <= end_mins:
+                        date_match = True
+                        break
+                else:  # 週をまたぐ範囲
+                    if prog_mins >= start_mins or prog_mins <= end_mins:
+                        date_match = True
+                        break
+            if program_search_condition.is_exclude_date_ranges:
+                if date_match:
+                    continue
+            else:
+                if not date_match:
+                    continue
 
+        schema_program = schemas.Program(
+            id = program.id,
+            channel_id = program.channel_id,
+            network_id = program.network_id,
+            service_id = program.service_id,
+            event_id = program.event_id,
+            title = program.title,
+            description = program.description,
+            detail = program.detail,
+            start_time = NormalizeToJSTDatetime(program.start_time),
+            end_time = NormalizeToJSTDatetime(program.end_time),
+            duration = program.duration,
+            is_free = program.is_free,
+            genres = program.genres,
+            video_type = program.video_type,
+            video_codec = program.video_codec,
+            video_resolution = program.video_resolution,
+            primary_audio_type = program.primary_audio_type,
+            primary_audio_language = program.primary_audio_language,
+            primary_audio_sampling_rate = program.primary_audio_sampling_rate,
+            secondary_audio_type = program.secondary_audio_type,
+            secondary_audio_language = program.secondary_audio_language,
+            secondary_audio_sampling_rate = program.secondary_audio_sampling_rate,
+        )
+        results.append(schema_program)
+
+    return schemas.Programs(total=len(results), programs=results)
 
 @router.get(
     '/timetable',
@@ -571,81 +461,9 @@ async def TimeTableAPI(
 
     programs_result = await connection.execute_query_dict(programs_query, programs_params)
 
-    # EDCB バックエンドの場合は予約情報を取得
+    # 予約情報 (将来 mirakc schedules から取得予定)
     reservations_by_program_id: dict[str, dict[str, Any]] = {}
     reservations_by_channel_time: dict[str, list[dict[str, Any]]] = {}
-    if Config().general.backend == 'EDCB':
-        try:
-            edcb = CtrlCmdUtil()
-            reserve_data_list: list[ReserveDataRequired] | None = await edcb.sendEnumReserve()
-            if reserve_data_list is not None:
-                # (ONID, TSID, SID) からチャンネル ID への逆引き辞書
-                ## 予約の EID が DB 上の番組情報と不一致でも、同一チャンネルかつ同一時間帯なら予約情報を表示できるようにする
-                channel_id_by_service_triplet: dict[tuple[int, int, int], str] = {}
-                for channel_row in channels_result:
-                    if channel_row['transport_stream_id'] is None:
-                        continue
-                    channel_id_by_service_triplet[(
-                        channel_row['network_id'],
-                        channel_row['transport_stream_id'],
-                        channel_row['service_id'],
-                    )] = channel_row['id']
-
-                # 録画中判定を行う時間範囲 (現在時刻の2時間前〜2時間後)
-                # 番組延長や繰り上げを考慮して余裕を持たせる
-                recording_check_start = now - timedelta(hours=2)
-                recording_check_end = now + timedelta(hours=2)
-
-                for reserve_data in reserve_data_list:
-                    reserve_start_time = NormalizeToJSTDatetime(reserve_data['start_time'])
-                    reserve_end_time = reserve_start_time + timedelta(seconds=reserve_data['duration_second'])
-
-                    # 番組 ID を構築
-                    program_id = f'NID{reserve_data["onid"]}-SID{reserve_data["sid"]:03d}-EID{reserve_data["eid"]}'
-
-                    # 予約状態を判定
-                    status: Literal['Reserved', 'Recording', 'Disabled']
-                    rec_mode = reserve_data.get('rec_setting', {}).get('rec_mode', 1)
-                    if rec_mode >= 5:  # 5以上は無効
-                        status = 'Disabled'
-                    else:
-                        # 現在時刻付近の番組のみ録画中かどうかを判定 (N+1 問題の回避)
-                        # 明らかに録画中でない番組に対して EDCB にクエリを発行しても無駄なので、
-                        # 録画中判定の時間範囲内 (現在時刻の前後2時間) にある番組のみチェックする
-                        if reserve_start_time <= recording_check_end and reserve_end_time >= recording_check_start:
-                            is_recording = type(await edcb.sendGetRecFilePath(reserve_data['reserve_id'])) is str
-                            status = 'Recording' if is_recording else 'Reserved'
-                        else:
-                            status = 'Reserved'
-
-                    # 録画可能状態
-                    recording_availability: Literal['Full', 'Partial', 'Unavailable'] = 'Full'
-                    if reserve_data['overlap_mode'] == 1:
-                        recording_availability = 'Partial'
-                    elif reserve_data['overlap_mode'] == 2:
-                        recording_availability = 'Unavailable'
-
-                    reservations_by_program_id[program_id] = {
-                        'id': reserve_data['reserve_id'],
-                        'status': status,
-                        'recording_availability': recording_availability,
-                    }
-                    channel_id = channel_id_by_service_triplet.get((
-                        reserve_data['onid'],
-                        reserve_data['tsid'],
-                        reserve_data['sid'],
-                    ))
-                    if channel_id is not None:
-                        if channel_id not in reservations_by_channel_time:
-                            reservations_by_channel_time[channel_id] = []
-                        reservations_by_channel_time[channel_id].append({
-                            'start_time': reserve_start_time,
-                            'end_time': reserve_end_time,
-                            'reservation': reservations_by_program_id[program_id],
-                        })
-        except Exception as ex:
-            # 予約情報の取得に失敗しても番組表自体は返す
-            logging.warning('[ProgramsRouter][TimeTableAPI] Failed to get reservations:', exc_info=ex)
 
     # チャンネルごとに番組をグループ化
     programs_by_channel: dict[str, list[dict[str, Any]]] = {c['id']: [] for c in channels_result}

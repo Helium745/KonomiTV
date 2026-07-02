@@ -65,7 +65,6 @@
             <div v-if="activeTab === 'settings' && reservation" class="reservation-detail-drawer__settings">
                 <ReservationRecordingSettings
                     :reservation="reservation"
-                    :presets="presets"
                     :has-changes="hasChanges"
                     @update-settings="handleUpdateSettings"
                     @changes-detected="hasChanges = $event" />
@@ -192,7 +191,7 @@ import ReservationRecordingSettings from '@/components/Reservations/ReservationR
 import Message from '@/message';
 import { type IChannel } from '@/services/Channels';
 import { type IProgram } from '@/services/Programs';
-import Reservations, { type IReservation, type IRecordSettings, type IRecordSettingsPresets } from '@/services/Reservations';
+import Reservations, { type IReservation, type IRecordSettings } from '@/services/Reservations';
 import useServerSettingsStore from '@/stores/ServerSettingsStore';
 import { ProgramUtils } from '@/utils';
 
@@ -249,8 +248,6 @@ const showDeleteDialog = ref(false);
 // 閉じる確認ダイアログの表示状態
 const showCloseConfirmDialog = ref(false);
 
-// 録画設定プリセット一覧 (EDCB バックエンド時のみ取得される)
-const presets = ref<IRecordSettingsPresets | null>(null);
 
 // 予約があるかどうか (null でなければ予約がある)
 // ただし id === -1 の場合は mock の予約なので、実際には予約がない状態
@@ -267,9 +264,8 @@ const hasRealReservation = computed(() => hasReservation.value && !isMockReserva
 const displayProgram = computed(() => props.reservation?.program ?? props.program ?? null);
 
 // EDCB バックエンドかどうか
-// サーバー設定がまだ取得されていない場合は EDCB と判定しない
-// (デフォルト値が 'EDCB' のため、未取得状態で誤って true を返すと Mirakurun バックエンドでも予約操作が有効化されてしまう)
-const isEDCBBackend = computed(() => serverSettingsStore.is_loaded === true && serverSettings.value.general.backend === 'EDCB');
+// mirakc バックエンドのみサポート。サーバー設定が取得済みであれば予約操作を有効化する
+const isEDCBBackend = computed(() => serverSettingsStore.is_loaded === true);
 
 // 録画設定タブを表示するかどうか
 // - 実際の予約がある場合: 表示 (既存予約の設定編集)
@@ -302,13 +298,8 @@ const isPartialRecording = computed(() => recordingAvailability.value === 'Parti
 // チューナー不足（録画不可）
 const isUnavailableRecording = computed(() => recordingAvailability.value === 'Unavailable');
 
-// サーバー設定を取得し、EDCB バックエンドの場合は録画設定プリセットも取得する
 onMounted(async () => {
     await serverSettingsStore.fetchServerSettingsOnce();
-    // EDCB バックエンドの場合のみプリセットを取得
-    if (isEDCBBackend.value) {
-        presets.value = await Reservations.fetchRecordingPresets();
-    }
 });
 
 // ドロワーが開かれた時の処理
@@ -350,14 +341,6 @@ const handleUpdateSettings = (newSettings: IRecordSettings) => {
 // 保存処理
 const handleSave = async () => {
     if (!hasChanges.value || isSaving.value || !currentSettings.value || !props.reservation) return;
-
-    // バリデーションチェック
-    const captionIsDefault = currentSettings.value.caption_recording_mode === 'Default';
-    const dataBroadcastingIsDefault = currentSettings.value.data_broadcasting_recording_mode === 'Default';
-    if (captionIsDefault !== dataBroadcastingIsDefault) {
-        Message.warning('字幕データ録画設定・データ放送録画設定を明示的に設定する際は、両方とも「デフォルト設定を使う」以外に設定してください。');
-        return;
-    }
 
     isSaving.value = true;
     try {
@@ -403,26 +386,11 @@ const confirmDelete = async () => {
 const handleAddReservation = async () => {
     if (isAdding.value || !displayProgram.value || !props.reservation) return;
 
-    // EDCB バックエンドでない場合はエラー
-    if (!isEDCBBackend.value) {
-        Message.error('録画予約機能は EDCB バックエンド選択時のみ利用できます。');
-        return;
-    }
-
     isAdding.value = true;
     try {
-        // バリデーションチェック (保存処理と同じ)
-        const recordSettings = currentSettings.value ?? props.reservation.record_settings;
-        const captionIsDefault = recordSettings.caption_recording_mode === 'Default';
-        const dataBroadcastingIsDefault = recordSettings.data_broadcasting_recording_mode === 'Default';
-        if (captionIsDefault !== dataBroadcastingIsDefault) {
-            Message.warning('字幕データ録画設定・データ放送録画設定を明示的に設定する際は、両方とも「デフォルト設定を使う」以外に設定してください。');
-            isAdding.value = false;
-            return;
-        }
-
         // mock の予約に含まれる record_settings を使用
         // ユーザーが録画設定タブで設定をカスタマイズしていればその設定が使われる
+        const recordSettings = currentSettings.value ?? props.reservation.record_settings;
         const success = await Reservations.addReservation(displayProgram.value.id, recordSettings);
         if (success) {
             Message.success('録画予約を追加しました。');
