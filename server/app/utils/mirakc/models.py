@@ -30,6 +30,100 @@ class WebRecordingRecorder(TypedDict):
     pipeline: list[dict[str, Any]]
 
 
+# --- タイムシフト録画 ---
+
+class WebTimeshiftRecorderChannel(TypedDict):
+    """mirakc のタイムシフトレコーダーが受信するチャンネル"""
+    type: str  # 'GR' | 'BS' | 'CS' | 'SKY'
+    channel: str
+
+
+class WebTimeshiftRecorderService(TypedDict):
+    """mirakc のタイムシフトレコーダーが対象とするサービス"""
+    id: int  # Mirakurun 互換の合成 ID (networkId * 100000 + serviceId 等)
+    serviceId: int
+    networkId: int
+    type: int
+    logoId: int
+    remoteControlKeyId: int
+    name: str
+    channel: WebTimeshiftRecorderChannel
+    hasLogoData: bool
+
+
+class WebTimeshiftRecorder(TypedDict):
+    """mirakc のタイムシフトレコーダー (GET /api/timeshift, GET /api/timeshift/{recorder} の応答)"""
+    name: str
+    service: WebTimeshiftRecorderService
+    startTime: int  # UNIX ミリ秒 (リングバッファ内に残っている最古の記録開始時刻)
+    endTime: int  # UNIX ミリ秒 (リングバッファ内の最新の記録終了時刻)
+    duration: int  # リングバッファに残っている総録画時間 (ミリ秒)
+    numRecords: int
+    pipeline: list[dict[str, Any]]
+    recording: bool
+    currentRecordId: NotRequired[int]  # recording=True の場合のみ存在。現在録画中の record ID
+
+
+class WebTimeshiftRecordVideo(TypedDict):
+    """mirakc のタイムシフト record に紐づく番組の映像コンポーネント情報"""
+    type: str  # 'mpeg2' | 'h264' | 'h265'
+    resolution: str  # 例: '1080i'
+    streamContent: int
+    componentType: int
+
+
+class WebTimeshiftRecordAudio(TypedDict):
+    """mirakc のタイムシフト record に紐づく番組の音声コンポーネント情報"""
+    componentType: int
+    isMain: bool
+    samplingRate: int
+    langs: list[str]
+
+
+class WebTimeshiftRecordGenre(TypedDict):
+    """mirakc のタイムシフト record に紐づく番組のジャンル情報 (ARIB STD-B10 準拠)"""
+    lv1: int
+    lv2: int
+    un1: int
+    un2: int
+
+
+class WebTimeshiftRecordRelatedItem(TypedDict):
+    """mirakc のタイムシフト record に紐づく番組の関連イベント情報 (中継・移動など)"""
+    type: str  # 'shared' | 'relay' | 'movement'
+    networkId: int | None
+    serviceId: int
+    eventId: int
+
+
+class WebTimeshiftRecordProgram(TypedDict):
+    """mirakc のタイムシフト record に紐づく番組情報"""
+    id: int  # mirakc ProgramId
+    eventId: int
+    serviceId: int
+    networkId: int
+    startAt: int  # UNIX ミリ秒
+    duration: int  # ミリ秒
+    isFree: bool
+    name: NotRequired[str]
+    description: NotRequired[str]
+    video: NotRequired[WebTimeshiftRecordVideo]
+    audio: NotRequired[WebTimeshiftRecordAudio]
+    audios: NotRequired[list[WebTimeshiftRecordAudio]]
+    genres: NotRequired[list[WebTimeshiftRecordGenre]]
+    relatedItems: NotRequired[list[WebTimeshiftRecordRelatedItem]]
+
+
+class WebTimeshiftRecord(TypedDict):
+    """mirakc のタイムシフト record (GET /api/timeshift/{recorder}/records, .../records/{record} の応答)"""
+    id: int  # record ID (番組の startAt から算出される秒単位の値)
+    program: WebTimeshiftRecordProgram
+    startTime: int  # UNIX ミリ秒 (実際に録画が開始された時刻。番組の startAt とはズレることがある)
+    duration: int  # ミリ秒 (現在までに録画された長さ。recording=True の間は増加し続ける)
+    size: int  # バイト数 (現在までに録画されたサイズ。recording=True の間は増加し続ける)
+    recording: bool  # True の間はこの record がまだ録画中であることを示す
+
+
 # --- プログラム ID ユーティリティ ---
 # mirakc ProgramId = network_id * 10^10 + service_id * 10^5 + event_id
 

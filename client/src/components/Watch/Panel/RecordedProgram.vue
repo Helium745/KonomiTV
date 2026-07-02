@@ -40,7 +40,7 @@
                     <span class="ml-2">コメント数:</span>
                     <span class="ml-2">{{comment_count ?? '--'}}</span>
                 </div>
-                <div v-ripple class="program-info__button" @click="toggleMylist">
+                <div v-if="playerStore.timeshift_recorder_id === null" v-ripple class="program-info__button" @click="toggleMylist">
                     <template v-if="isInMylist">
                         <Icon icon="fluent:checkmark-16-filled" width="18px" height="18px"
                             style="color: rgb(var(--v-theme-primary)); margin-bottom: -1px" />

@@ -26,6 +26,7 @@ from app import logging
 from app.config import Config
 from app.constants import LIBRARY_PATH, QUALITY, QUALITY_TYPES
 from app.schemas import KeyFrame
+from app.utils.mirakc import OpenRecordedFile
 from app.utils.TSKeyFrameSeeker import TSKeyFrameCollector
 
 
@@ -441,7 +442,7 @@ class VideoEncodingTask:
                 await self.video_stream.ensureTSKeyFrameContext()
             except Exception as ex:
                 logging.warning(f'{self.video_stream.log_prefix} Failed to initialize input keyframe collector context:', exc_info=ex)
-            file = open(self.video_stream.recorded_program.recorded_video.file_path, 'rb')
+            file = OpenRecordedFile(self.video_stream.recorded_program.recorded_video.file_path)
 
         # 入力 TS を tsreadex に渡すついでに見つけたキーフレームを保持する
         ## ワーカースレッドでは DB を触らず、イベントループ側が節目ごとに segment_map へ変換して保存する
@@ -798,6 +799,14 @@ class VideoEncodingTask:
 
                     # 実際のセグメント開始位置にシーク
                     file.seek(current_segment.source_file_position)
+
+                    # PAT/PMT の抽出に失敗した場合、後続の分岐では tsreadex の標準入力に file を直接 (OS のファイルディスクリプタとして)
+                    # 渡すフォールバックになるが、HttpRangeFile (mirakc タイムシフト録画の HTTP ストリーム入力) は実ファイルディスクリプタを
+                    # 持たないため、この方法では読み取れない
+                    ## fileno() を持たない入力の場合は、PAT/PMT が見つかった場合と同じスレッドでのポンピング処理に合流させることで、
+                    ## 空の PAT/PMT 付加データ (実質何も付加しない) として扱い、以降の処理を共通化する
+                    if initial_pat_pmt_data is None and hasattr(file, 'fileno') is False:
+                        initial_pat_pmt_data = b''
 
                 # tsreadex のオプション
                 ## 放送波の前処理を行い、エンコードを安定させるツール

@@ -28,6 +28,7 @@ from app.streams.StreamEncodingOptions import StreamEncodingOptions
 from app.streams.VideoEncodingTask import VideoEncodingTask
 from app.streams.VideoSegmentPlanner import VideoSegmentPlanner
 from app.utils import SetTimeout
+from app.utils.mirakc import TIMESHIFT_FILE_PATH_SCHEME
 from app.utils.MP4KeyFrameParser import MP4KeyFrameParser
 from app.utils.TSKeyFrameSeeker import TSKeyFrameSeeker, TSStreamInfo
 
@@ -318,6 +319,11 @@ class VideoStream:
         if recorded_video.container_format != 'MPEG-TS':
             return
 
+        # mirakc タイムシフト録画はリングバッファの実ファイルを直接読めないため、PAT/PMT の事前解析は行わない
+        ## VideoEncodingTask 側では ts_stream_info が None のままキーフレーム収集をスキップする分岐に入る
+        if recorded_video.file_path.startswith(TIMESHIFT_FILE_PATH_SCHEME):
+            return
+
         async with self._source_position_lock:
             file_path = Path(recorded_video.file_path)
 
@@ -502,6 +508,29 @@ class VideoStream:
                 return
 
             recorded_video = self.recorded_program.recorded_video
+
+            # mirakc タイムシフト録画はリングバッファ内のバイト位置とキーフレームの対応を事前に知る術がないため、
+            ## 録画時間に対するバイトサイズの比率から開始位置を近似する
+            ## tsreadex / エンコーダーは非アラインな位置から入力されても次の PAT/PMT とキーフレームまで自動的に同期するため、
+            ## ライブストリームの途中参加と同様に扱える (スパイク検証で動作確認済み)
+            if recorded_video.file_path.startswith(TIMESHIFT_FILE_PATH_SCHEME):
+                if recorded_video.duration > 0:
+                    approximate_position = round(
+                        segment.playlist_start_seconds / recorded_video.duration * recorded_video.file_size
+                    )
+                else:
+                    approximate_position = 0
+                segment.source_file_position = max(0, min(approximate_position, recorded_video.file_size - 1))
+                # プレイリスト上の経過時間をそのまま DTS の基準として使う (実際の入力 DTS とは無関係の合成値)
+                ## run() 側の分割境界判定は「このセッション内で自己参照的に単調増加するか」だけが重要なので、これで整合する
+                segment.source_start_dts = round(segment.playlist_start_seconds * ts.HZ)
+                logging.debug(
+                    f'{self.log_prefix}[Segment {segment_sequence}] '
+                    f'Segment source position approximated for timeshift recording. '
+                    f'[elapsed: {(time.perf_counter() - resolve_start_time) * 1000:.1f}ms]'
+                )
+                return
+
             file_path = Path(recorded_video.file_path)
 
             if recorded_video.container_format == 'MPEG-TS':

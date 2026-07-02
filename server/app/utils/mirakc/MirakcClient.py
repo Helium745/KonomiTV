@@ -8,6 +8,8 @@ from app.utils.mirakc.models import (
     RecordingOptions,
     WebRecordingRecorder,
     WebRecordingSchedule,
+    WebTimeshiftRecord,
+    WebTimeshiftRecorder,
 )
 
 
@@ -182,6 +184,62 @@ class MirakcClient:
             return False
         response.raise_for_status()
         return True
+
+    # --- タイムシフト録画 ---
+
+    async def fetch_timeshift_recorders(self) -> list[WebTimeshiftRecorder]:
+        """GET /api/timeshift → タイムシフトレコーダー一覧"""
+        async with HTTPX_CLIENT() as client:
+            response = await client.get(_get_api_url('/api/timeshift'), timeout=10)
+            response.raise_for_status()
+            return response.json()
+
+    async def fetch_timeshift_recorder(self, recorder: str) -> WebTimeshiftRecorder | None:
+        """GET /api/timeshift/{recorder} → タイムシフトレコーダー、存在しない場合は None"""
+        try:
+            async with HTTPX_CLIENT() as client:
+                response = await client.get(_get_api_url(f'/api/timeshift/{recorder}'), timeout=5)
+            if response.status_code == 404:
+                return None
+            response.raise_for_status()
+            return response.json()
+        except (httpx.NetworkError, httpx.TimeoutException):
+            return None
+
+    async def fetch_timeshift_records(self, recorder: str) -> list[WebTimeshiftRecord]:
+        """GET /api/timeshift/{recorder}/records → タイムシフト record 一覧"""
+        async with HTTPX_CLIENT() as client:
+            response = await client.get(_get_api_url(f'/api/timeshift/{recorder}/records'), timeout=10)
+            response.raise_for_status()
+            return response.json()
+
+    async def fetch_timeshift_record(self, recorder: str, record_id: int) -> WebTimeshiftRecord | None:
+        """GET /api/timeshift/{recorder}/records/{record} → タイムシフト record、存在しない場合は None"""
+        try:
+            async with HTTPX_CLIENT() as client:
+                response = await client.get(_get_api_url(f'/api/timeshift/{recorder}/records/{record_id}'), timeout=5)
+            if response.status_code == 404:
+                return None
+            response.raise_for_status()
+            return response.json()
+        except (httpx.NetworkError, httpx.TimeoutException):
+            return None
+
+    # --- タイムシフト ストリーム URL ヘルパー ---
+
+    def get_timeshift_record_stream_url(self, recorder: str, record_id: int) -> str:
+        """
+        /api/timeshift/{recorder}/records/{record}/stream の URL を生成する
+        (実際の接続・Range リクエストは VideoEncodingTask 側で行う)
+
+        Args:
+            recorder (str): mirakc タイムシフトレコーダー名
+            record_id (int): タイムシフト record ID
+
+        Returns:
+            str: オンデマンドストリーム URL
+        """
+        return _get_api_url(f'/api/timeshift/{recorder}/records/{record_id}/stream')
 
     # --- ライブストリーム URL ヘルパー ---
 

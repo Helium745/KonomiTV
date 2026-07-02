@@ -1,12 +1,17 @@
 
 import multiprocessing
 import re
-from typing import ClassVar, Literal, cast
+from typing import TYPE_CHECKING, ClassVar, Literal, cast
 
+import ariblib.constants
 from ariblib.aribstr import AribString
 from tortoise import Tortoise, connections
 from tortoise.exceptions import ConfigurationError
 from tortoise.expressions import Q
+
+
+if TYPE_CHECKING:
+    from app.schemas import Genre
 
 
 # 地デジ放送エリアの Literal 型（北海道は7分割、計53選択肢）
@@ -316,6 +321,51 @@ class TSInformation:
 
         # 置換した文字列を返す
         return result
+
+
+    @staticmethod
+    def convertARIBGenresToGenreDicts(genres: list[dict[str, int]]) -> list['Genre']:
+        """
+        EIT の genres フィールド (lv1/lv2/un1/un2 の数値コード) を、KonomiTV の Genre 形式 (major/middle) に変換する
+
+        Args:
+            genres (list[dict[str, int]]): lv1 / lv2 / un1 / un2 キーを持つ ARIB ジャンルコードのリスト
+
+        Returns:
+            list[Genre]: major (大分類) / middle (中分類) のテキストに変換したジャンルのリスト
+        """
+
+        # ローカルインポート (循環インポート回避)
+        from app.schemas import Genre
+
+        genre_dicts: list[Genre] = []
+        for genre in genres:  # ジャンルごとに
+
+            # 大まかなジャンルを取得
+            genre_tuple = ariblib.constants.CONTENT_TYPE.get(genre['lv1'])
+            if genre_tuple is None:
+                continue
+
+            # major … 大分類
+            # middle … 中分類
+            genre_dict: Genre = {
+                'major': genre_tuple[0].replace('／', '・'),
+                'middle': genre_tuple[1].get(genre['lv2'], '未定義').replace('／', '・'),
+            }
+
+            # BS/地上デジタル放送用番組付属情報がジャンルに含まれている場合、user_nibble から値を取得して書き換える
+            # たとえば「中止の可能性あり」や「延長の可能性あり」といった情報が取れる
+            if genre_dict['major'] == '拡張':
+                if genre_dict['middle'] == 'BS/地上デジタル放送用番組付属情報':
+                    user_nibble = (genre['un1'] * 0x10) + genre['un2']
+                    genre_dict['middle'] = ariblib.constants.USER_TYPE.get(user_nibble, '未定義')
+                # 「拡張」はあるがBS/地上デジタル放送用番組付属情報でない場合はなんの値なのかわからないのでパス
+                else:
+                    continue
+
+            genre_dicts.append(genre_dict)
+
+        return genre_dicts
 
 
     @staticmethod

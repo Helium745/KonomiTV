@@ -55,6 +55,21 @@ const router = createRouter({
             component: () => import('@/views/Videos/Watch.vue'),
         },
         {
+            path: '/timeshift/',
+            name: 'Timeshift Home',
+            component: () => import('@/views/Timeshift/Home.vue'),
+        },
+        {
+            path: '/timeshift/:recorder_id',
+            name: 'Timeshift Records',
+            component: () => import('@/views/Timeshift/Records.vue'),
+        },
+        {
+            path: '/timeshift/watch/:recorder_id/:record_id',
+            name: 'Timeshift Watch',
+            component: () => import('@/views/Timeshift/Watch.vue'),
+        },
+        {
             path: '/timetable/',
             name: 'TimeTable',
             component: () => import('@/views/TimeTable.vue'),

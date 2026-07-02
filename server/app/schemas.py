@@ -263,6 +263,48 @@ class SeriesBroadcastPeriod(PydanticModel):
     end_date: date
     recorded_programs: list[RecordedProgram]
 
+# ***** タイムシフト録画 (mirakc のリングバッファ録画) *****
+## DB には保存せず、mirakc の Web API から取得した情報をその都度変換して返す (ephemeral なデータのため)
+
+class TimeshiftRecorder(BaseModel):
+    recorder_id: str  # mirakc 上のタイムシフトレコーダー名 (例: 'nhk-g')
+    channel: Channel | None = None  # 対応する KonomiTV 側チャンネルが見つかった場合のみセット
+    network_id: int
+    service_id: int
+    is_recording: bool  # True の間はこのレコーダーで録画が進行中
+    current_record_id: int | None = None  # is_recording が True の場合のみセット
+    total_records: int
+    start_time: datetime  # リングバッファ内に残っている最古の記録の開始時刻
+    end_time: datetime  # リングバッファ内の最新の記録の終了時刻
+    duration: float  # リングバッファに残っている総録画時間 (秒)
+
+class TimeshiftRecorders(BaseModel):
+    total: int
+    timeshift_recorders: list[TimeshiftRecorder]
+
+class TimeshiftRecord(BaseModel):
+    id: int  # mirakc 上の record ID (mirakc レコーダー内でのみ一意)
+    recorder_id: str  # mirakc 上のタイムシフトレコーダー名
+    channel: Channel | None = None  # 対応する KonomiTV 側チャンネルが見つかった場合のみセット
+    network_id: int
+    service_id: int
+    event_id: int
+    title: str
+    description: str = '番組概要を取得できませんでした。'
+    genres: list[Genre] = []
+    is_free: bool = True
+    is_recording: bool  # True の間はこの record がまだ録画中で、末尾が伸び続けている
+    start_time: datetime  # 実際に録画が開始された時刻 (mirakc startTime)
+    end_time: datetime  # 現在までに録画が完了している範囲の終了時刻 (start_time + duration)
+    duration: float  # 現在までに録画された長さ (秒)。is_recording の間は増加し続ける
+    file_size: int  # 現在までに録画されたサイズ (バイト数)。is_recording の間は増加し続ける
+    primary_audio_type: str = '2/0モード(ステレオ)'
+    primary_audio_language: str = '日本語'
+
+class TimeshiftRecords(BaseModel):
+    total: int
+    timeshift_records: list[TimeshiftRecord]
+
 # ***** ユーザー *****
 
 class User(PydanticModel):

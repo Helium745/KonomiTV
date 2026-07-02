@@ -36,6 +36,8 @@ from app.routers import (
     ReservationsRouter,
     SeriesRouter,
     SettingsRouter,
+    TimeshiftRouter,
+    TimeshiftStreamsRouter,
     TwitterRouter,
     UsersRouter,
     VersionRouter,
@@ -71,8 +73,10 @@ app.include_router(ChannelsRouter.router)
 app.include_router(ProgramsRouter.router)
 app.include_router(VideosRouter.router)
 app.include_router(SeriesRouter.router)
+app.include_router(TimeshiftRouter.router)
 app.include_router(LiveStreamsRouter.router)
 app.include_router(VideoStreamsRouter.router)
+app.include_router(TimeshiftStreamsRouter.router)
 app.include_router(ReservationsRouter.router)
 app.include_router(ReservationConditionsRouter.router)
 app.include_router(RecordingPresetsRouter.router)

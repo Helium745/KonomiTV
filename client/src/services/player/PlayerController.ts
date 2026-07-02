@@ -412,7 +412,10 @@ class PlayerController {
                 // ビデオ視聴: 録画番組情報がセットされているはず
                 } else {
                     // ビデオストリーミング API のベース URL
-                    const streaming_api_base_url = `${Utils.api_base_url}/streams/video/${player_store.recorded_program.id}`;
+                    // タイムシフト録画視聴時は、mirakc 上のレコーダー名と record ID (recorded_program.id に格納) から URL を組み立てる
+                    const streaming_api_base_url = player_store.timeshift_recorder_id !== null ?
+                        `${Utils.api_base_url}/streams/timeshift/${player_store.timeshift_recorder_id}/${player_store.recorded_program.id}` :
+                        `${Utils.api_base_url}/streams/video/${player_store.recorded_program.id}`;
                     // 画質リストを作成
                     for (const quality_name of VIDEO_STREAMING_QUALITIES) {
                         // 画質ごとに異なるセッション ID を生成 (セッション ID は UUID の - で区切って一番左側のみを使う)
@@ -432,6 +435,13 @@ class PlayerController {
                         // PlayerController.init() のオプションでデフォルト画質が指定されている場合は
                         // 画質プロファイルに記載の画質ではなく、指定された（前回再生時の）画質を使ってレジュームする
                         default_quality = options.default_quality;
+                    }
+                    // タイムシフト録画はメタデータ解析を行わないためタイル状サムネイルが存在せず、専用の取得 API も用意していない
+                    if (player_store.timeshift_recorder_id !== null) {
+                        return {
+                            quality: qualities,
+                            defaultQuality: default_quality,
+                        };
                     }
                     const tile_info = player_store.recorded_program.recorded_video.thumbnail_info?.tile ?? null;
                     return {
@@ -495,6 +505,9 @@ class PlayerController {
                     if (this.playback_mode === 'Live') {
                         // ライブ視聴: 空の配列を返す
                         // ライブ視聴では LiveCommentManager 側でリアルタイムにコメントを受信して直接描画するため、ここでは一旦コメント0件として認識させる
+                        options.success([]);
+                    } else if (player_store.timeshift_recorder_id !== null) {
+                        // タイムシフト録画視聴: DB 上の録画番組 ID を持たないため過去ログコメントを取得できず、空の配列を返す
                         options.success([]);
                     } else {
                         // ビデオ視聴: 過去ログコメントを取得して返す
@@ -1110,7 +1123,10 @@ class PlayerController {
                 if (this.player === null) return;
                 const api_quality = PlayerUtils.extractVideoAPIQualityFromDPlayer(this.player);
                 const session_id = PlayerUtils.extractSessionIdFromDPlayer(this.player);
-                await APIClient.put(`${Utils.api_base_url}/streams/video/${player_store.recorded_program.id}/${api_quality}/keep-alive?session_id=${session_id}`);
+                const streaming_api_base_url = player_store.timeshift_recorder_id !== null ?
+                    `${Utils.api_base_url}/streams/timeshift/${player_store.timeshift_recorder_id}/${player_store.recorded_program.id}` :
+                    `${Utils.api_base_url}/streams/video/${player_store.recorded_program.id}`;
+                await APIClient.put(`${streaming_api_base_url}/${api_quality}/keep-alive?session_id=${session_id}`);
             }, 5 * 1000);
         }
 
@@ -1512,59 +1528,62 @@ class PlayerController {
             // 視聴履歴の更新処理
             // timeupdate イベントを間引いて処理
             // ここで登録したイベントは、destroy() を実行した際にプレイヤーごと破棄される
-            let last_timeupdate_fired_at = 0;
-            this.player.on('timeupdate', () => {
-                if (!this.player || !this.player.video) {
-                    return;
-                }
-                // 前回 timeupdate イベントが発火した時刻から WATCHED_HISTORY_UPDATE_INTERVAL 秒間は処理を実行しない（間引く）
-                const now = new Date().getTime();
-                if (now - last_timeupdate_fired_at < PlayerController.WATCHED_HISTORY_UPDATE_INTERVAL * 1000) {
-                    return;
-                }
-                last_timeupdate_fired_at = now;
-                const current_time = this.player.video.currentTime;
-                const video_id = player_store.recorded_program.id;
-                const history_index = settings_store.settings.watched_history.findIndex(
-                    history => history.video_id === video_id
-                );
-                // 視聴履歴が既に登録されている場合のみ、現在の再生位置を更新
-                if (history_index !== -1) {
-                    settings_store.settings.watched_history[history_index].last_playback_position = current_time;
-                    settings_store.settings.watched_history[history_index].updated_at = Utils.time();
-                    console.log(`\u001b[31m[PlayerController] Last playback position updated. (Video ID: ${video_id}, last_playback_position: ${current_time})`);
-                }
-            });
-
-            // 視聴開始から WATCHED_HISTORY_THRESHOLD_SECONDS 秒間このページが開かれ続けていたら、視聴履歴に追加する
-            this.watched_history_threshold_timer_id = window.setTimeout(() => {
-                if (!this.player || !this.player.video) {
-                    return;
-                }
-                const video_id = player_store.recorded_program.id;
-                const history_index = settings_store.settings.watched_history.findIndex(
-                    history => history.video_id === video_id
-                );
-                // まだ視聴履歴に存在しない場合のみ追加
-                if (history_index === -1) {
-                    // 視聴履歴が最大件数に達している場合は、最も古い履歴を削除
-                    if (settings_store.settings.watched_history.length >= settings_store.settings.video_watched_history_max_count) {
-                        // 最も古い created_at のタイムスタンプを持つ履歴のインデックスを探す
-                        const oldest_index = settings_store.settings.watched_history.reduce((oldest_idx, current, idx, arr) => {
-                            return current.created_at < arr[oldest_idx].created_at ? idx : oldest_idx;
-                        }, 0);
-                        // 最も古い履歴を削除
-                        settings_store.settings.watched_history.splice(oldest_index, 1);
+            // タイムシフト録画は DB 上の録画番組 ID を持たないため、視聴履歴には登録しない
+            if (player_store.timeshift_recorder_id === null) {
+                let last_timeupdate_fired_at = 0;
+                this.player.on('timeupdate', () => {
+                    if (!this.player || !this.player.video) {
+                        return;
                     }
-                    settings_store.settings.watched_history.push({
-                        video_id: video_id,
-                        last_playback_position: this.player.video.currentTime,
-                        created_at: Utils.time(),  // 秒単位
-                        updated_at: Utils.time(),  // 秒単位
-                    });
-                    console.log(`\u001b[31m[PlayerController] Watched history added. (Video ID: ${video_id}, last_playback_position: ${this.player.video.currentTime})`);
-                }
-            }, PlayerController.WATCHED_HISTORY_THRESHOLD_SECONDS * 1000);
+                    // 前回 timeupdate イベントが発火した時刻から WATCHED_HISTORY_UPDATE_INTERVAL 秒間は処理を実行しない（間引く）
+                    const now = new Date().getTime();
+                    if (now - last_timeupdate_fired_at < PlayerController.WATCHED_HISTORY_UPDATE_INTERVAL * 1000) {
+                        return;
+                    }
+                    last_timeupdate_fired_at = now;
+                    const current_time = this.player.video.currentTime;
+                    const video_id = player_store.recorded_program.id;
+                    const history_index = settings_store.settings.watched_history.findIndex(
+                        history => history.video_id === video_id
+                    );
+                    // 視聴履歴が既に登録されている場合のみ、現在の再生位置を更新
+                    if (history_index !== -1) {
+                        settings_store.settings.watched_history[history_index].last_playback_position = current_time;
+                        settings_store.settings.watched_history[history_index].updated_at = Utils.time();
+                        console.log(`\u001b[31m[PlayerController] Last playback position updated. (Video ID: ${video_id}, last_playback_position: ${current_time})`);
+                    }
+                });
+
+                // 視聴開始から WATCHED_HISTORY_THRESHOLD_SECONDS 秒間このページが開かれ続けていたら、視聴履歴に追加する
+                this.watched_history_threshold_timer_id = window.setTimeout(() => {
+                    if (!this.player || !this.player.video) {
+                        return;
+                    }
+                    const video_id = player_store.recorded_program.id;
+                    const history_index = settings_store.settings.watched_history.findIndex(
+                        history => history.video_id === video_id
+                    );
+                    // まだ視聴履歴に存在しない場合のみ追加
+                    if (history_index === -1) {
+                        // 視聴履歴が最大件数に達している場合は、最も古い履歴を削除
+                        if (settings_store.settings.watched_history.length >= settings_store.settings.video_watched_history_max_count) {
+                            // 最も古い created_at のタイムスタンプを持つ履歴のインデックスを探す
+                            const oldest_index = settings_store.settings.watched_history.reduce((oldest_idx, current, idx, arr) => {
+                                return current.created_at < arr[oldest_idx].created_at ? idx : oldest_idx;
+                            }, 0);
+                            // 最も古い履歴を削除
+                            settings_store.settings.watched_history.splice(oldest_index, 1);
+                        }
+                        settings_store.settings.watched_history.push({
+                            video_id: video_id,
+                            last_playback_position: this.player.video.currentTime,
+                            created_at: Utils.time(),  // 秒単位
+                            updated_at: Utils.time(),  // 秒単位
+                        });
+                        console.log(`\u001b[31m[PlayerController] Watched history added. (Video ID: ${video_id}, last_playback_position: ${this.player.video.currentTime})`);
+                    }
+                }, PlayerController.WATCHED_HISTORY_THRESHOLD_SECONDS * 1000);
+            }
         }
     }
 
@@ -2065,7 +2084,8 @@ class PlayerController {
 
         // 視聴履歴の最終位置を更新
         // 現在の再生位置を取得するため、プレイヤーの破棄前に実行する必要がある
-        if (this.playback_mode === 'Video' && this.player && this.player.video) {
+        // タイムシフト録画は DB 上の録画番組 ID を持たないため、視聴履歴には登録しない
+        if (this.playback_mode === 'Video' && player_store.timeshift_recorder_id === null && this.player && this.player.video) {
             const history_index = settings_store.settings.watched_history.findIndex(
                 history => history.video_id === player_store.recorded_program.id
             );

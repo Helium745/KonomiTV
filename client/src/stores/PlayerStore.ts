@@ -80,6 +80,11 @@ const usePlayerStore = defineStore('player', {
         // 視聴中の録画番組がない場合は IRecordedProgramDefault を設定すべき (初期値も IRecordedProgramDefault にしている)
         recorded_program: structuredClone(IRecordedProgramDefault) as IRecordedProgram,
 
+        // 現在視聴中がタイムシフト録画の場合の mirakc 上のレコーダー名
+        // 通常の録画番組視聴時は null 、タイムシフト録画視聴時のみ非 null になる
+        // このフィールドが非 null のとき、recorded_program.id は録画番組の DB 上の ID ではなく mirakc 上の record ID を表す
+        timeshift_recorder_id: null as string | null,
+
         // 仮想キーボードが表示されているか
         // 既定で表示されていない想定
         is_virtual_keyboard_display: false,
@@ -212,6 +217,7 @@ const usePlayerStore = defineStore('player', {
             this.is_watching = false;
             this.is_player_initialized = false;
             this.recorded_program = structuredClone(IRecordedProgramDefault);
+            this.timeshift_recorder_id = null;
             this.is_virtual_keyboard_display = false;
             this.is_fullscreen = false;
             this.is_document_pip = false;
