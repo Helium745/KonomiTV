@@ -1,18 +1,19 @@
 
 import json
 import re
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Body, Query
 from pydantic import TypeAdapter
 from tortoise import connections
 
-from app import schemas
+from app import logging, schemas
 from app.constants import JST
 from app.models.Channel import Channel
 from app.models.Program import Program
 from app.utils import NormalizeToJSTDatetime, ParseDatetimeStringToJST
+from app.utils.mirakc import MirakcClient, decode_program_id
 from app.utils.TSInformation import TSInformation
 
 
@@ -262,7 +263,7 @@ async def TimeTableAPI(
     """
     番組表データを取得する。<br>
     チャンネルごとの番組リストと、番組データの有効日付範囲を含む。<br>
-    EDCB バックエンド時は各番組の予約情報も含む。
+    mirakc の録画予約 (schedules) を突き合わせ、各番組の予約情報も含む。
     """
 
     # 現在時刻
@@ -461,9 +462,59 @@ async def TimeTableAPI(
 
     programs_result = await connection.execute_query_dict(programs_query, programs_params)
 
-    # 予約情報 (将来 mirakc schedules から取得予定)
+    # 予約情報を mirakc の録画スケジュール (schedules) から取得し、番組表の各番組に紐付ける
+    ## 番組 ID (NID-SID-EID) をキーに引き当てるのが基本だが、EPG 更新で EID がずれるケースを救済するため、
+    ## チャンネル+時間帯でも引けるよう reservations_by_channel_time にも積んでおく (下のループでフォールバック解決に使用)
     reservations_by_program_id: dict[str, dict[str, Any]] = {}
     reservations_by_channel_time: dict[str, list[dict[str, Any]]] = {}
+
+    # DB チャンネルの NID+SID → チャンネル ID の対応表 (フォールバック解決用)
+    nid_sid_to_channel_id: dict[tuple[int, int], str] = {
+        (c['network_id'], c['service_id']): c['id'] for c in channels_result
+    }
+
+    try:
+        mirakc_client = MirakcClient()
+        schedules = await mirakc_client.fetch_schedules()
+    except Exception as ex:
+        # mirakc が一時的に応答しない場合でも番組表自体は表示できるよう、予約情報なしで続行する
+        logging.warning(f'[ProgramsRouter][TimeTableAPI] Failed to fetch mirakc schedules: {ex}')
+        schedules = []
+
+    for schedule in schedules:
+        # 終了・失敗した予約は「これから録画される予定」ではないため、番組表の点線枠には反映しない
+        # (録画済み一覧・録画予約一覧側で別途確認できる)
+        if schedule['state'] not in ('scheduled', 'tracking', 'recording', 'rescheduling'):
+            continue
+
+        mirakc_program = schedule['program']
+        network_id, service_id, event_id = decode_program_id(mirakc_program['id'])
+        program_id_str = f'NID{network_id}-SID{service_id:03d}-EID{event_id}'
+
+        reservation_status: Literal['Reserved', 'Recording', 'Disabled'] = (
+            'Recording' if schedule['state'] == 'recording' else 'Reserved'
+        )
+        reservation_info: dict[str, Any] = {
+            # mirakc ProgramId をそのまま録画予約 ID として使う (ReservationsRouter と同一の採番)
+            'id': mirakc_program['id'],
+            'status': reservation_status,
+            # mirakc はチューナー競合の事前計算を行わないため、常に Full 扱いとする
+            'recording_availability': 'Full',
+        }
+
+        reservations_by_program_id[program_id_str] = reservation_info
+
+        channel_id = nid_sid_to_channel_id.get((network_id, service_id))
+        if channel_id is not None:
+            start_at_ms = mirakc_program.get('startAt', 0)
+            duration_ms = mirakc_program.get('duration', 0)
+            fallback_start_time = datetime.fromtimestamp(start_at_ms / 1000, tz=UTC).astimezone(JST)
+            fallback_end_time = datetime.fromtimestamp((start_at_ms + duration_ms) / 1000, tz=UTC).astimezone(JST)
+            reservations_by_channel_time.setdefault(channel_id, []).append({
+                'start_time': fallback_start_time,
+                'end_time': fallback_end_time,
+                'reservation': reservation_info,
+            })
 
     # チャンネルごとに番組をグループ化
     programs_by_channel: dict[str, list[dict[str, Any]]] = {c['id']: [] for c in channels_result}
