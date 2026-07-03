@@ -4,6 +4,24 @@
 <img width="100%" src="https://github.com/user-attachments/assets/6971f354-0418-4305-bf6d-b061142ffec6">
 <video controls src="https://github.com/user-attachments/assets/ee0b6df0-3bb0-40da-99f4-798437aa2f9c"></video>
 
+## このフォークの説明
+
+このフォークは、Mirakurun互換サーバーであるmirakcを最大限に活かすために作られたフォークです。  
+mirakc独自の録画機能やタイムシフト機能を使用しているため、Mirakurun/EDCBは使用できません。
+
+具体的には、以下の変更を行っています。
+- パッケージマネージャをPoetryからuvに変更
+- Mirakurun/EDCB構成からmirakcに全て移行
+  - 録画予約機能をmirakcに移行
+  - 番組表機能をKonomiTV側で管理
+- タイムシフトの視聴・保存機能を追加
+
+なお、この変更点はAI生成によって作られています。**動作は確認していますが、想定外の不具合が潜んでいる可能性があります。**
+
+以下、フォーク元のReadmeです。
+
+---
+
 **いろいろな場所とデバイスでテレビと録画を快適に見れる、モダンな Web ベースのソフトウェアです。**
 
 ユーザーのさまざまな好みがつまった、温かみのある居心地の良い場を作りたいという願いを込めて、KonomiTV と名付けました。  

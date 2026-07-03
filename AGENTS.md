@@ -42,6 +42,7 @@
   - `views/`: ルートコンポーネント/ページ (`TV/` `Videos/` `Reservations/` `Settings/`、および `Login.vue` `Register.vue` `MyList.vue` `WatchedHistory.vue` `MyPage.vue` `NotFound.vue`)
   - `components/`: Vue コンポーネント
     - `Watch/`: 視聴画面向け。`Panel/` (右パネル内表示)、`Panel/Twitter/` (ツイート検索/TL/キャプチャ管理/表示)
+    - `Timeshift/`: タイムシフト録画の恒久保存ダイアログ群。`SaveDialog.vue` (record 1本をまるごと保存) / `CutOutDialog.vue` (番組の区切りとは無関係にレコーダーのリングバッファ全体から絶対時刻で範囲を切り出し保存、複数 record にまたがってもOK)
     - `Settings/`: 設定ページのダイアログ群
     - `HeaderBar.vue` / `SPHeaderBar.vue` (スマホ用) / `Navigation.vue` / `BottomNavigation.vue` (スマホ用) / `Snackbars.vue` (通知) / `Breadcrumbs.vue` (パンくず)
   - `stores/`: Pinia ストア
@@ -61,8 +62,14 @@
 - `app/`: FastAPI アプリケーションコード
   - `routers/`: API ルートハンドラー
     - `ChannelsRouter` (チャンネル) / `ProgramsRouter` (番組) / `VideosRouter` (録画番組) / `SeriesRouter` (シリーズ)
+<<<<<<< HEAD
     - `LiveStreamsRouter` (ライブ配信) / `VideoStreamsRouter` (録画配信)
     - `ReservationsRouter` (EDCB 録画予約) / `ReservationConditionsRouter` (EPG 自動予約条件) / `DataBroadcastingRouter` (データ放送のネット接続)
+=======
+    - `TimeshiftRouter` (mirakc タイムシフト録画のレコーダー/レコード一覧、および恒久保存 API (`TimeshiftSaveTask` へのジョブ投入・進捗一覧))
+    - `LiveStreamsRouter` (ライブ配信) / `VideoStreamsRouter` (録画配信) / `TimeshiftStreamsRouter` (タイムシフト録画配信)
+    - `ReservationsRouter` (mirakc 録画予約) / `ReservationConditionsRouter` (EPG 自動予約条件) / `DataBroadcastingRouter` (データ放送のネット接続)
+>>>>>>> ca5a50f1 (Docs: ReadmeとAGENTS.mdを更新)
     - `CapturesRouter` (キャプチャ) / `TwitterRouter` (Twitter) / `NiconicoRouter` (ニコニコ実況)
     - `UsersRouter` (ユーザー) / `SettingsRouter` (設定) / `MaintenanceRouter` (メンテ) / `VersionRouter` (バージョン)
   - `models/`: DB モデルとスキーマ
@@ -73,6 +80,12 @@
     - `LiveEncodingTask` / `VideoEncodingTask` (エンコード・配信タスク) / `LiveStream` / `VideoStream` (状態管理) / `LivePSIDataArchiver` (PSI/SI 抽出・アーカイブ)
   - `metadata/`: 録画番組からのメタデータ抽出・保存
     - `RecordedScanTask` (録画フォルダ監視・DB 同期) / `MetadataAnalyzer` (メタデータ解析) / `TSInfoAnalyzer` (TS 番組情報解析) / `ThumbnailGenerator` (シークバー用タイル画像+代表サムネ生成) / `CMSectionsDetector` (CM 区間検出)
+<<<<<<< HEAD
+=======
+  - `tasks/`: シングルトンのバックグラウンドタスク
+    - `AutoReservationTask` (mirakc の SSE イベント + 定期スキャンでキーワード自動予約条件と EPG を突き合わせ、マッチした番組を mirakc の録画スケジュールに反映)
+    - `TimeshiftSaveTask` (mirakc タイムシフト録画のリングバッファ内容を録画フォルダ配下へ無劣化コピーし恒久保存するジョブキュー。record 1本まるごと保存と、番組をまたぐ絶対時刻範囲の切り出し保存の2種類。書き出したファイルは `RecordedScanTask` が自動検知して DB 登録する)
+>>>>>>> ca5a50f1 (Docs: ReadmeとAGENTS.mdを更新)
   - `utils/`:
     - `edcb/` (EDCB 連携クライアント) / `JikkyoClient` (ニコニコ実況・NX-Jikkyo) / `TwitterGraphQLAPI` (リバエン Twitter クライアント) / `TSInformation` (MPEG2-TS 情報取得)
     - `OAuthCallbackResponse` (OAuth コールバック用特殊レスポンス) / `DriveIOLimiter` (ドライブ別同時実行制限) / `ProcessLimiter` (プロセス別同時実行制限)
