@@ -2,11 +2,14 @@
 from datetime import datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, status
 
 from app import logging, schemas
 from app.constants import JST
 from app.models.Channel import Channel
+from app.models.User import User
+from app.routers.UsersRouter import GetCurrentUser
+from app.tasks.TimeshiftSaveTask import TimeshiftSaveTask
 from app.utils.mirakc import MirakcClient, WebTimeshiftRecord, WebTimeshiftRecorder
 from app.utils.TSInformation import TSInformation
 
@@ -203,3 +206,82 @@ async def TimeshiftRecorderRecordAPI(
         )
 
     return await ConvertToTimeshiftRecordSchema(recorder_id, record)
+
+
+@router.post(
+    '/recorders/{recorder_id}/records/{record_id}/save',
+    summary = 'タイムシフト record 保存 API',
+    response_description = '作成された保存ジョブ。',
+    response_model = schemas.TimeshiftSaveJob,
+)
+async def TimeshiftRecordSaveAPI(
+    recorder_id: Annotated[str, Path(description='mirakc 上のタイムシフトレコーダー名。')],
+    record_id: Annotated[int, Path(description='mirakc 上のタイムシフト record ID。')],
+    _: Annotated[WebTimeshiftRecorder, Depends(ValidateRecorderID)],
+    __: Annotated[User, Depends(GetCurrentUser)],
+):
+    """
+    指定されたタイムシフト record (= 1番組) をまるごと、録画フォルダ配下に恒久保存用の TS ファイルとして書き出す。<br>
+    リングバッファ上にしか実体がないタイムシフト録画を、上書きされる前に残しておきたい場合に使う。<br>
+    書き出しは非同期のバックグラウンドジョブとして実行され、完了すると通常の録画番組と同じように一覧に表示される。
+    """
+
+    try:
+        return await TimeshiftSaveTask().enqueueFullRecord(recorder_id=recorder_id, record_id=record_id)
+    except ValueError as ex:
+        logging.error(f'[TimeshiftRouter][TimeshiftRecordSaveAPI] Failed to enqueue save job: {ex}')
+        raise HTTPException(
+            status_code = status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail = str(ex),
+        ) from ex
+
+
+@router.post(
+    '/recorders/{recorder_id}/save-range',
+    summary = 'タイムシフト時間範囲保存 API',
+    response_description = '作成された保存ジョブ。',
+    response_model = schemas.TimeshiftSaveJob,
+)
+async def TimeshiftRangeSaveAPI(
+    recorder_id: Annotated[str, Path(description='mirakc 上のタイムシフトレコーダー名。')],
+    save_request: Annotated[schemas.TimeshiftRangeSaveRequest, Body(description='保存する絶対時刻の範囲。')],
+    _: Annotated[WebTimeshiftRecorder, Depends(ValidateRecorderID)],
+    __: Annotated[User, Depends(GetCurrentUser)],
+):
+    """
+    指定されたレコーダーのリングバッファ全体から、番組の区切りとは無関係に絶対時刻で範囲を切り出して保存する。<br>
+    例えば「1:00〜2:00」のように、複数の番組にまたがる範囲もまとめて1本の TS ファイルとして書き出せる。<br>
+    書き出しは非同期のバックグラウンドジョブとして実行され、完了すると通常の録画番組と同じように一覧に表示される。
+    """
+
+    try:
+        return await TimeshiftSaveTask().enqueueRange(
+            recorder_id = recorder_id,
+            start_time = save_request.start_time,
+            end_time = save_request.end_time,
+        )
+    except ValueError as ex:
+        logging.error(f'[TimeshiftRouter][TimeshiftRangeSaveAPI] Failed to enqueue save job: {ex}')
+        raise HTTPException(
+            status_code = status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail = str(ex),
+        ) from ex
+
+
+@router.get(
+    '/saves',
+    summary = 'タイムシフト保存ジョブ一覧 API',
+    response_description = 'タイムシフト保存ジョブのリスト。',
+    response_model = schemas.TimeshiftSaveJobs,
+)
+async def TimeshiftSaveJobsAPI():
+    """
+    タイムシフト record の保存ジョブ (進行中・完了・失敗を含む) の一覧を、作成日時が新しい順に取得する。<br>
+    保存の進捗確認用のポーリング API として使う想定。
+    """
+
+    save_jobs = TimeshiftSaveTask().getJobs()
+    return {
+        'total': len(save_jobs),
+        'save_jobs': save_jobs,
+    }

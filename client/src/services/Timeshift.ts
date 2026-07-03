@@ -51,6 +51,38 @@ export interface ITimeshiftRecords {
     timeshift_records: ITimeshiftRecord[];
 }
 
+/** SaveDialog が保存対象の特定に必要とする ITimeshiftRecord のサブセット */
+export type ITimeshiftSaveTarget = Pick<ITimeshiftRecord, 'id' | 'recorder_id' | 'title' | 'start_time' | 'end_time'>;
+
+/** タイムシフト時間範囲保存リクエストを表すインターフェース (番組の区切りとは無関係に、絶対時刻で範囲を指定する) */
+export interface ITimeshiftRangeSaveRequest {
+    start_time: string;
+    end_time: string;
+}
+
+/** タイムシフト保存ジョブ情報を表すインターフェース */
+export interface ITimeshiftSaveJob {
+    id: string;
+    recorder_id: string;
+    record_id: number | null;
+    title: string;
+    is_range_cut: boolean;
+    start_time: string;
+    end_time: string;
+    status: 'Pending' | 'Running' | 'Completed' | 'Failed';
+    progress: number;
+    file_size_total: number;
+    file_size_written: number;
+    error_message: string | null;
+    created_at: string;
+}
+
+/** タイムシフト保存ジョブ情報のリストを表すインターフェース */
+export interface ITimeshiftSaveJobs {
+    total: number;
+    save_jobs: ITimeshiftSaveJob[];
+}
+
 
 class Timeshift {
 
@@ -101,6 +133,61 @@ class Timeshift {
 
         if (response.type === 'error') {
             APIClient.showGenericError(response, 'タイムシフト録画情報を取得できませんでした。');
+            return null;
+        }
+
+        return response.data;
+    }
+
+
+    /**
+     * タイムシフト record (= 1番組) をまるごと録画フォルダへ恒久保存する
+     * @param recorder_id mirakc 上のタイムシフトレコーダー名
+     * @param record_id mirakc 上のタイムシフト record ID
+     * @returns 作成された保存ジョブ or 失敗した場合は null
+     */
+    static async saveTimeshiftRecord(recorder_id: string, record_id: number): Promise<ITimeshiftSaveJob | null> {
+
+        const response = await APIClient.post<ITimeshiftSaveJob>(`/timeshift/recorders/${recorder_id}/records/${record_id}/save`);
+
+        if (response.type === 'error') {
+            APIClient.showGenericError(response, 'タイムシフト録画の保存を開始できませんでした。');
+            return null;
+        }
+
+        return response.data;
+    }
+
+
+    /**
+     * レコーダーのリングバッファ全体から、番組の区切りとは無関係に絶対時刻で範囲を切り出して録画フォルダへ保存する
+     * @param recorder_id mirakc 上のタイムシフトレコーダー名
+     * @param save_request 保存する絶対時刻の範囲
+     * @returns 作成された保存ジョブ or 失敗した場合は null
+     */
+    static async saveTimeshiftRange(recorder_id: string, save_request: ITimeshiftRangeSaveRequest): Promise<ITimeshiftSaveJob | null> {
+
+        const response = await APIClient.post<ITimeshiftSaveJob>(`/timeshift/recorders/${recorder_id}/save-range`, save_request);
+
+        if (response.type === 'error') {
+            APIClient.showGenericError(response, 'タイムシフト録画の切り出し保存を開始できませんでした。');
+            return null;
+        }
+
+        return response.data;
+    }
+
+
+    /**
+     * タイムシフト保存ジョブの一覧を取得する
+     * @returns タイムシフト保存ジョブ一覧情報 or 取得に失敗した場合は null
+     */
+    static async fetchTimeshiftSaveJobs(): Promise<ITimeshiftSaveJobs | null> {
+
+        const response = await APIClient.get<ITimeshiftSaveJobs>('/timeshift/saves');
+
+        if (response.type === 'error') {
+            APIClient.showGenericError(response, 'タイムシフト保存ジョブ一覧を取得できませんでした。');
             return null;
         }
 

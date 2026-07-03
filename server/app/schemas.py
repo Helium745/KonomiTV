@@ -305,6 +305,30 @@ class TimeshiftRecords(BaseModel):
     total: int
     timeshift_records: list[TimeshiftRecord]
 
+class TimeshiftRangeSaveRequest(BaseModel):
+    # レコーダーのリングバッファ全体から、番組の区切りとは無関係に絶対時刻で範囲を切り出して保存する
+    start_time: Annotated[datetime, Field(description='保存範囲の開始時刻。')]
+    end_time: Annotated[datetime, Field(description='保存範囲の終了時刻。')]
+
+class TimeshiftSaveJob(BaseModel):
+    id: str  # 保存ジョブの UUID
+    recorder_id: str  # mirakc 上のタイムシフトレコーダー名
+    record_id: int | None = None  # mirakc 上のタイムシフト record ID。時間範囲指定保存では複数 record にまたがるため None
+    title: str  # 保存対象のタイトル (番組名、または時間範囲指定保存の場合は時間帯+チャンネル名) (ジョブ一覧の表示用)
+    is_range_cut: bool  # True の場合、番組(record) 1本ではなく、番組をまたぐ可能性のある時間範囲指定保存
+    start_time: datetime  # 保存範囲の開始時刻 (壁時計時刻)
+    end_time: datetime  # 保存範囲の終了時刻 (壁時計時刻)
+    status: Literal['Pending', 'Running', 'Completed', 'Failed']
+    progress: float  # 0.0〜1.0 のコピー進捗率
+    file_size_total: int  # コピー対象の総バイト数
+    file_size_written: int  # 現在までに書き込み済みのバイト数
+    error_message: str | None = None  # status が Failed の場合のエラー内容
+    created_at: datetime  # ジョブが作成された時刻
+
+class TimeshiftSaveJobs(BaseModel):
+    total: int
+    save_jobs: list[TimeshiftSaveJob]
+
 # ***** ユーザー *****
 
 class User(PydanticModel):

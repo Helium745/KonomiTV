@@ -46,6 +46,7 @@ from app.routers import (
 )
 from app.streams.LiveStream import LiveStream
 from app.tasks.AutoReservationTask import AutoReservationTask
+from app.tasks.TimeshiftSaveTask import TimeshiftSaveTask
 from app.utils.FastAPITaskUtil import repeat_every
 
 
@@ -224,9 +225,10 @@ tortoise.contrib.fastapi.register_tortoise(
 # サーバーの起動時に実行する
 recorded_scan_task: RecordedScanTask | None = None
 auto_reservation_task: AutoReservationTask | None = None
+timeshift_save_task: TimeshiftSaveTask | None = None
 @app.on_event('startup')
 async def Startup():
-    global recorded_scan_task, auto_reservation_task
+    global recorded_scan_task, auto_reservation_task, timeshift_save_task
 
     # チャンネル情報を更新
     await Channel.update()
@@ -251,6 +253,10 @@ async def Startup():
     # キーワード自動予約タスクを開始
     auto_reservation_task = AutoReservationTask()
     await auto_reservation_task.start()
+
+    # タイムシフト録画の恒久保存タスクを開始
+    timeshift_save_task = TimeshiftSaveTask()
+    await timeshift_save_task.start()
 
 # サーバー設定で指定された時間 (デフォルト: 15分) ごとに1回、チャンネル情報と番組情報を更新する
 # チャンネル情報は頻繁に変わるわけではないけど、手動で再起動しなくても自動で変更が適用されてほしい
@@ -292,6 +298,12 @@ async def Shutdown():
     if auto_reservation_task is not None:
         await auto_reservation_task.stop()
         auto_reservation_task = None
+
+    # タイムシフト録画の恒久保存タスクを停止
+    global timeshift_save_task
+    if timeshift_save_task is not None:
+        await timeshift_save_task.stop()
+        timeshift_save_task = None
 
     # 録画フォルダ監視タスクを停止
     global recorded_scan_task

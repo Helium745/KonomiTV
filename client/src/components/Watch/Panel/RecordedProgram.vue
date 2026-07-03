@@ -51,6 +51,10 @@
                         <span style="margin-left: 6px;">マイリストに追加</span>
                     </template>
                 </div>
+                <div v-else v-ripple class="program-info__button" @click="is_save_dialog_open = true">
+                    <Icon icon="fluent:save-20-regular" width="18px" height="18px" style="margin-bottom: -1px" />
+                    <span style="margin-left: 6px;">この番組を保存</span>
+                </div>
             </div>
         </section>
         <section class="program-detail-container">
@@ -60,6 +64,8 @@
                 <div class="program-detail__text" v-html="Utils.URLtoLink(detail_text)"></div>
             </div>
         </section>
+        <SaveDialog v-if="playerStore.timeshift_recorder_id !== null" v-model="is_save_dialog_open"
+            :record="timeshiftSaveTarget" />
     </div>
 </template>
 <script lang="ts">
@@ -67,13 +73,18 @@
 import { mapStores } from 'pinia';
 import { defineComponent } from 'vue';
 
+import SaveDialog from '@/components/Timeshift/SaveDialog.vue';
 import Message from '@/message';
+import { ITimeshiftSaveTarget } from '@/services/Timeshift';
 import usePlayerStore from '@/stores/PlayerStore';
 import useSettingsStore from '@/stores/SettingsStore';
 import Utils, { ProgramUtils } from '@/utils';
 
 export default defineComponent({
     name: 'Panel-RecordedProgramTab',
+    components: {
+        SaveDialog,
+    },
     data() {
         return {
             // ユーティリティをテンプレートで使えるように
@@ -82,6 +93,9 @@ export default defineComponent({
 
             // コメント数カウント
             comment_count: null as number | null,
+
+            // タイムシフト保存ダイアログの表示状態
+            is_save_dialog_open: false,
         };
     },
     computed: {
@@ -92,6 +106,18 @@ export default defineComponent({
             return this.settingsStore.settings.mylist.some(item =>
                 item.type === 'RecordedProgram' && item.id === this.playerStore.recorded_program.id
             );
+        },
+
+        // SaveDialog に渡す保存対象情報 (timeshift_recorder_id が非 null の間のみ意味を持つ)
+        timeshiftSaveTarget(): ITimeshiftSaveTarget {
+            const program = this.playerStore.recorded_program;
+            return {
+                id: program.id,
+                recorder_id: this.playerStore.timeshift_recorder_id ?? '',
+                title: program.title,
+                start_time: program.start_time,
+                end_time: program.end_time,
+            };
         },
     },
     methods: {
