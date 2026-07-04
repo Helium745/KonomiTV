@@ -38,6 +38,9 @@ TWITTER_DEBUG_SCREENSHOTS_DIR = DATA_DIR / 'twitter-debug-screenshots'
 ## デバッグ用スクリーンショットの保持期限 (日数)
 ## 7 日を超えたスクリーンショットを自動削除する
 TWITTER_DEBUG_SCREENSHOTS_RETENTION_DAYS = 7
+## 録画視聴 (VOD) 時にエンコード済み HLS セグメントをキャッシュするディレクトリ
+## 保持期間は ServerSettings.video.encode_cache_retention_hours で設定する
+VIDEO_ENCODE_CACHE_DIR = DATA_DIR / 'video-encode-cache'
 ## サーバー終了時に再起動が必要なことを伝えるロックファイルのパス
 RESTART_REQUIRED_LOCK_PATH = DATA_DIR / 'restart_required.lock'
 

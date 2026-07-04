@@ -26,6 +26,7 @@ from app import logging
 from app.config import Config
 from app.constants import LIBRARY_PATH, QUALITY, QUALITY_TYPES
 from app.schemas import KeyFrame
+from app.streams import VideoEncodeCache
 from app.utils.mirakc import OpenRecordedFile
 from app.utils.TSKeyFrameSeeker import TSKeyFrameCollector
 
@@ -1254,6 +1255,18 @@ class VideoEncodingTask:
                                     current_segment.encode_status = 'Completed'
                                     logging.info(f'{self.video_stream.log_prefix}[Segment {current_sequence}] Successfully Encoded HLS Segment.')
 
+                                    # エンコード結果をディスクキャッシュに保存し、別の視聴セッションや巻き戻し再生での再エンコードを省略できるようにする
+                                    ## 書き込みに失敗しても再生自体は継続できるべきなので、失敗時はログのみ残す (VideoEncodeCache.WriteCachedSegment() 内で処理される)
+                                    recorded_video = self.video_stream.recorded_program.recorded_video
+                                    await VideoEncodeCache.WriteCachedSegment(
+                                        recorded_video.id,
+                                        recorded_video.file_hash,
+                                        self.video_stream.quality,
+                                        self.video_stream.encoding_options,
+                                        current_segment.sequence_index,
+                                        bytes(encoded_segment),
+                                    )
+
                                     # 次のセグメントへ移行
                                     current_sequence += 1
 
@@ -1545,6 +1558,17 @@ class VideoEncodingTask:
                 current_segment.encoded_segment_ts_future.set_result(bytes(encoded_segment))
                 current_segment.encode_status = 'Completed'
                 logging.info(f'{self.video_stream.log_prefix}[Segment {current_sequence}] Successfully Encoded Final HLS Segment.')
+
+                # エンコード結果をディスクキャッシュに保存する (通常のセグメント確定時と同様)
+                recorded_video = self.video_stream.recorded_program.recorded_video
+                await VideoEncodeCache.WriteCachedSegment(
+                    recorded_video.id,
+                    recorded_video.file_hash,
+                    self.video_stream.quality,
+                    self.video_stream.encoding_options,
+                    current_segment.sequence_index,
+                    bytes(encoded_segment),
+                )
 
             # エンコードタスクでのすべての処理を完了した
             self._is_finished = True

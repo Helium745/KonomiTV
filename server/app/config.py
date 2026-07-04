@@ -307,6 +307,7 @@ class _ServerSettingsTV(BaseModel):
 class _ServerSettingsVideo(BaseModel):
     recorded_folders: list[DirectoryPath] = []
     exclude_scan_paths: list[str] = []
+    encode_cache_retention_hours: PositiveInt = 12
 
 class _ServerSettingsCapture(BaseModel):
     upload_folders: list[DirectoryPath] = []

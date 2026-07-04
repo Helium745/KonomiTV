@@ -24,6 +24,7 @@ from app.constants import QUALITY_TYPES
 from app.models.RecordedProgram import RecordedProgram
 from app.models.RecordedVideo import RecordedVideo
 from app.schemas import KeyFrame, SegmentMapEntry
+from app.streams import VideoEncodeCache
 from app.streams.StreamEncodingOptions import StreamEncodingOptions
 from app.streams.VideoEncodingTask import VideoEncodingTask
 from app.streams.VideoSegmentPlanner import VideoSegmentPlanner
@@ -800,63 +801,79 @@ class VideoStream:
             async with self._video_encoding_task_lock:
                 # ロック待ちの間に他のリクエストがすでにエンコードを開始している可能性があるため再確認する
                 if segment.encode_status == 'Pending':
-                    # シークでは旧エンコーダーが同じ録画ファイルを読み続けていると、未キャッシュ区間の探索と I/O が競合する
-                    ## そのため source position 解決より前に旧タスクへキャンセルを投げ、探索が録画ファイルを読みやすい状態へ寄せる
-                    if self._video_encoding_task_ref is not None:
-                        await self.__cancelVideoEncodingTask(should_wait_for_runner = False)
-                        logging.info(
-                            f'{self.log_prefix}[Segment {segment_sequence}] '
-                            f'Previous Encoding Task Canceled before source position resolution.'
-                        )
-
-                    # このセグメントからエンコーダーを起動するため、入力ソース上の開始位置を先に確定する
-                    await self.resolveSegmentSourcePosition(segment_sequence)
-                    encoding_start_sequence = segment_sequence
-
-                    # QSVEncC では MPEG-TS の入力 DTS が 33bit ラップ直前にある状態で起動すると、
-                    ## `check_pts()` が後続フレームの時刻を逆行扱いして小刻みな PTS 補正を入れてしまい、結果盛大に音ズレする既知の問題がある
-                    ## 同一ファイルでも FFmpeg / NVEncC では正常な間隔でエンコードできているため、QSVEncC のみ少し手前から連続エンコードする
-                    ## 映像ストリーム構成が途中で変わる録画は VideoEncodingTask 側で FFmpeg に固定されるため、この QSVEncC 専用の回避策は適用不要
-                    if (
-                        Config().general.encoder == 'QSVEncC' and
-                        self.recorded_program.recorded_video.container_format == 'MPEG-TS' and
-                        self.recorded_program.recorded_video.has_video_stream_changes is False
-                    ):
-                        wrap_avoidance_ticks = self.DTS_WRAP_AVOIDANCE_SECONDS * ts.HZ
-                        backtrack_iterations = 0
-                        while encoding_start_sequence > 0:
-                            backtrack_iterations += 1
-                            if backtrack_iterations > self.DTS_WRAP_AVOIDANCE_MAX_BACKTRACK_SEGMENTS:
-                                logging.warning(
-                                    f'{self.log_prefix}[Segment {segment_sequence}] '
-                                    f'QSVEncC DTS wrap avoidance reached the backtrack limit. '
-                                    f'[encoding_start_sequence: {encoding_start_sequence}]'
-                                )
-                                break
-                            encoding_start_segment = self._segments[encoding_start_sequence]
-                            if encoding_start_segment.source_start_dts is None:
-                                await self.resolveSegmentSourcePosition(encoding_start_sequence)
-                                encoding_start_segment = self._segments[encoding_start_sequence]
-                            assert encoding_start_segment.source_start_dts is not None
-                            distance_to_wrap = ts.PCR_CYCLE - (encoding_start_segment.source_start_dts % ts.PCR_CYCLE)
-                            if distance_to_wrap > wrap_avoidance_ticks:
-                                break
-                            encoding_start_sequence -= 1
-
-                        if encoding_start_sequence != segment_sequence:
+                    # エンコードタスクを起動する前に、まずディスクキャッシュを確認する
+                    ## 同じ録画番組・同じ画質を別の視聴セッションが過去にエンコード済みであれば、それを再利用してエンコーダーの起動自体を省略する
+                    recorded_video = self.recorded_program.recorded_video
+                    cached_segment_ts = await VideoEncodeCache.ReadCachedSegment(
+                        recorded_video.id,
+                        recorded_video.file_hash,
+                        self.quality,
+                        self.encoding_options,
+                        segment_sequence,
+                    )
+                    if cached_segment_ts is not None:
+                        if not segment.encoded_segment_ts_future.done():
+                            segment.encoded_segment_ts_future.set_result(cached_segment_ts)
+                        segment.encode_status = 'Completed'
+                        logging.info(f'{self.log_prefix}[Segment {segment_sequence}] Loaded HLS segment from disk cache.')
+                    else:
+                        # シークでは旧エンコーダーが同じ録画ファイルを読み続けていると、未キャッシュ区間の探索と I/O が競合する
+                        ## そのため source position 解決より前に旧タスクへキャンセルを投げ、探索が録画ファイルを読みやすい状態へ寄せる
+                        if self._video_encoding_task_ref is not None:
+                            await self.__cancelVideoEncodingTask(should_wait_for_runner = False)
                             logging.info(
                                 f'{self.log_prefix}[Segment {segment_sequence}] '
-                                f'QSVEncC start adjusted to Segment {encoding_start_sequence} to avoid DTS wrap.',
+                                f'Previous Encoding Task Canceled before source position resolution.'
                             )
 
-                    # 新しいエンコードタスクのインスタンスを初期化
-                    ## エンコードタスクは基本使い回せないので、再度新しく初期化する
-                    self._video_encoding_task = VideoEncodingTask(self)
+                        # このセグメントからエンコーダーを起動するため、入力ソース上の開始位置を先に確定する
+                        await self.resolveSegmentSourcePosition(segment_sequence)
+                        encoding_start_sequence = segment_sequence
 
-                    # 新しいエンコードタスクを開始
-                    self._video_encoding_task_ref = asyncio.create_task(self._video_encoding_task.run(encoding_start_sequence))
-                    self.__registerVideoEncodingTaskRef(self._video_encoding_task_ref)
-                    logging.info(f'{self.log_prefix}[Segment {encoding_start_sequence}] New Encoding Task Started.')
+                        # QSVEncC では MPEG-TS の入力 DTS が 33bit ラップ直前にある状態で起動すると、
+                        ## `check_pts()` が後続フレームの時刻を逆行扱いして小刻みな PTS 補正を入れてしまい、結果盛大に音ズレする既知の問題がある
+                        ## 同一ファイルでも FFmpeg / NVEncC では正常な間隔でエンコードできているため、QSVEncC のみ少し手前から連続エンコードする
+                        ## 映像ストリーム構成が途中で変わる録画は VideoEncodingTask 側で FFmpeg に固定されるため、この QSVEncC 専用の回避策は適用不要
+                        if (
+                            Config().general.encoder == 'QSVEncC' and
+                            self.recorded_program.recorded_video.container_format == 'MPEG-TS' and
+                            self.recorded_program.recorded_video.has_video_stream_changes is False
+                        ):
+                            wrap_avoidance_ticks = self.DTS_WRAP_AVOIDANCE_SECONDS * ts.HZ
+                            backtrack_iterations = 0
+                            while encoding_start_sequence > 0:
+                                backtrack_iterations += 1
+                                if backtrack_iterations > self.DTS_WRAP_AVOIDANCE_MAX_BACKTRACK_SEGMENTS:
+                                    logging.warning(
+                                        f'{self.log_prefix}[Segment {segment_sequence}] '
+                                        f'QSVEncC DTS wrap avoidance reached the backtrack limit. '
+                                        f'[encoding_start_sequence: {encoding_start_sequence}]'
+                                    )
+                                    break
+                                encoding_start_segment = self._segments[encoding_start_sequence]
+                                if encoding_start_segment.source_start_dts is None:
+                                    await self.resolveSegmentSourcePosition(encoding_start_sequence)
+                                    encoding_start_segment = self._segments[encoding_start_sequence]
+                                assert encoding_start_segment.source_start_dts is not None
+                                distance_to_wrap = ts.PCR_CYCLE - (encoding_start_segment.source_start_dts % ts.PCR_CYCLE)
+                                if distance_to_wrap > wrap_avoidance_ticks:
+                                    break
+                                encoding_start_sequence -= 1
+
+                            if encoding_start_sequence != segment_sequence:
+                                logging.info(
+                                    f'{self.log_prefix}[Segment {segment_sequence}] '
+                                    f'QSVEncC start adjusted to Segment {encoding_start_sequence} to avoid DTS wrap.',
+                                )
+
+                        # 新しいエンコードタスクのインスタンスを初期化
+                        ## エンコードタスクは基本使い回せないので、再度新しく初期化する
+                        self._video_encoding_task = VideoEncodingTask(self)
+
+                        # 新しいエンコードタスクを開始
+                        self._video_encoding_task_ref = asyncio.create_task(self._video_encoding_task.run(encoding_start_sequence))
+                        self.__registerVideoEncodingTaskRef(self._video_encoding_task_ref)
+                        logging.info(f'{self.log_prefix}[Segment {encoding_start_sequence}] New Encoding Task Started.')
 
         # セグメントデータの Future が完了したらそのデータを返す
         encoded_segment_ts = await asyncio.shield(segment.encoded_segment_ts_future)

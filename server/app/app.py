@@ -44,6 +44,7 @@ from app.routers import (
     VideosRouter,
     VideoStreamsRouter,
 )
+from app.streams import VideoEncodeCache
 from app.streams.LiveStream import LiveStream
 from app.tasks.AutoReservationTask import AutoReservationTask
 from app.tasks.TimeshiftSaveTask import TimeshiftSaveTask
@@ -258,6 +259,9 @@ async def Startup():
     timeshift_save_task = TimeshiftSaveTask()
     await timeshift_save_task.start()
 
+    # 録画視聴のエンコードキャッシュから、前回起動時のクラッシュ残骸や期限切れのキャッシュファイルを削除する
+    await VideoEncodeCache.CleanupExpiredCacheFiles()
+
 # サーバー設定で指定された時間 (デフォルト: 15分) ごとに1回、チャンネル情報と番組情報を更新する
 # チャンネル情報は頻繁に変わるわけではないけど、手動で再起動しなくても自動で変更が適用されてほしい
 # 番組情報の更新処理はかなり重くストリーム配信などの他の処理に影響してしまうため、マルチプロセスで実行する
@@ -277,6 +281,12 @@ async def UpdateChannelAndProgram():
 @repeat_every(seconds=0.5 * 60, wait_first=0.5 * 60, logger=logging.logger)
 async def UpdateChannelJikkyoStatus():
     await Channel.updateJikkyoStatus()
+
+# 1時間に1回、保持期限を過ぎた録画視聴のエンコードキャッシュを削除する
+@app.on_event('startup')
+@repeat_every(seconds=60 * 60, wait_first=60 * 60, logger=logging.logger)
+async def CleanupVideoEncodeCache():
+    await VideoEncodeCache.CleanupExpiredCacheFiles()
 
 # サーバーの終了時に実行する
 cleanup = False
