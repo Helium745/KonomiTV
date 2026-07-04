@@ -56,6 +56,9 @@ RUN yarn build
 ## cuda:x.x.x-runtime 系イメージだと NVEncC で使わない余計なライブラリが付属して重いので、base イメージを使う
 FROM nvidia/cuda:12.8.0-base-ubuntu22.04
 
+# uv公式のビルドされたイメージからuvをコピーする
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
 # タイムゾーンを東京に設定
 ENV TZ=Asia/Tokyo
 
@@ -108,13 +111,12 @@ RUN apt-get update && \
 WORKDIR /code/server/
 COPY --from=thirdparty-downloader /thirdparty/ /code/server/thirdparty/
 
-# Poetry の依存パッケージリストだけをコピー
-COPY ./server/pyproject.toml ./server/poetry.lock ./server/poetry.toml /code/server/
+# uv の依存パッケージリストだけをコピー
+COPY ./server/pyproject.toml ./server/uv.lock /code/server/
 
-# 依存パッケージを poetry でインストール
+# 依存パッケージを uv でインストール
 ## 仮想環境 (.venv) をプロジェクト直下に作成する
-RUN /code/server/thirdparty/Python/bin/python -m poetry env use /code/server/thirdparty/Python/bin/python && \
-    /code/server/thirdparty/Python/bin/python -m poetry install --only main --no-root
+RUN uv sync --python /code/server/thirdparty/Python/bin/python
 
 # サーバーのソースコードをコピー
 COPY ./server/ /code/server/
