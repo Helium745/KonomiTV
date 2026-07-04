@@ -219,6 +219,20 @@
                     <span class="ml-1">除外フォルダを追加</span>
                 </v-btn>
             </div>
+            <div class="settings__item">
+                <div class="settings__item-heading">録画視聴時のエンコードキャッシュを保持する時間</div>
+                <div class="settings__item-label">
+                    録画番組を視聴した際にエンコードした HLS セグメントを一定時間ディスクに保存しておき、同じ録画番組・同じ画質を再度視聴する際に再エンコードを省略して負荷を削減します。<br>
+                </div>
+                <div class="settings__item-label mt-1">
+                    ここで指定した時間が経過したキャッシュファイルは自動的に削除されます。値を大きくするほどディスク使用量が増える点に注意してください。<br>
+                </div>
+                <v-slider class="settings__item-form" color="primary" show-ticks="always" thumb-label hide-details
+                    :min="1" :max="72" :step="1"
+                    :density="is_form_dense ? 'compact' : 'default'"
+                    v-model="server_settings.video.encode_cache_retention_hours">
+                </v-slider>
+            </div>
             <div class="settings__content-heading mt-6">
                 <Icon icon="fluent:image-multiple-16-filled" width="22px" />
                 <span class="ml-2">キャプチャ</span>

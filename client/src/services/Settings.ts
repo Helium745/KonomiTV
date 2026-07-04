@@ -129,6 +129,7 @@ export interface IServerSettings {
     video: {
         recorded_folders: string[];
         exclude_scan_paths: string[];
+        encode_cache_retention_hours: number;
     };
     capture: {
         upload_folders: string[];
@@ -157,6 +158,7 @@ export const IServerSettingsDefault: IServerSettings = {
     video: {
         recorded_folders: [],
         exclude_scan_paths: [],
+        encode_cache_retention_hours: 12,
     },
     capture: {
         upload_folders: [],

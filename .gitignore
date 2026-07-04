@@ -149,7 +149,8 @@ cython_debug/
 config.yaml
 
 # docker-compose.yaml
-docker-compose.yaml
+*compose*.yaml
+!*compose.example.yaml
 
 # user files
 server/data/*.*
@@ -158,15 +159,13 @@ server/data/thumbnails/*.*
 server/data/thumbnails/old/*.*
 server/data/twitter*
 server/static/interlaced_*
+server/data/video-encode-cache/*
 
 # thirdparty
 server/thirdparty/*
 
 # encoder coredup
 server/core.*
-
-# subproject
-/EDCB/
 
 # ignore .gitkeep
 !.gitkeep
