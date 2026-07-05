@@ -92,6 +92,11 @@ const usePlayerStore = defineStore('player', {
         // フルスクリーン状態かどうか
         is_fullscreen: false,
 
+        // 擬似フルスクリーン状態かどうか
+        // iPhone Safari など任意要素への Fullscreen API 非対応環境で、CSS の回転により擬似的に
+        // 横向きフルスクリーン表示を実現している際に true になる (is_fullscreen も同時に true になる)
+        is_pseudo_fullscreen: false,
+
         // Document Picture-in-Picture モードかどうか
         is_document_pip: false,
 
@@ -220,6 +225,7 @@ const usePlayerStore = defineStore('player', {
             this.timeshift_recorder_id = null;
             this.is_virtual_keyboard_display = false;
             this.is_fullscreen = false;
+            this.is_pseudo_fullscreen = false;
             this.is_document_pip = false;
             this.is_control_display = true;
             this.is_panel_display = (() => {

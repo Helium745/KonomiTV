@@ -1,5 +1,7 @@
 <template>
-    <div class="watch-panel"
+    <div class="watch-panel" :class="{
+             'watch-panel--pseudo-fullscreen': playerStore.is_pseudo_fullscreen,
+         }"
          @mousemove="playerStore.event_emitter.emit('SetControlDisplayTimer', {event: $event})">
         <div class="watch-panel__header">
             <div v-ripple class="panel-close-button" @click="playerStore.is_panel_display = false">
@@ -151,6 +153,17 @@ export default defineComponent({
         width: 100%;
         height: auto;
         flex-grow: 1;
+    }
+
+    // 擬似フルスクリーン表示時は、物理的には縦画面のままだが UI を回転させ横画面として表示するため、
+    // 縦画面向けのパネル下部積みレイアウトを打ち消し、スマホ横画面と同様に右サイドの固定幅パネルにする
+    // (物理的に横画面になっている場合は元々 smartphone-horizontal の指定で足りるため対象外)
+    &.watch-panel--pseudo-fullscreen {
+        @media (orientation: portrait) {
+            width: 310px;
+            height: 100%;
+            flex-grow: 0;
+        }
     }
 
     // タッチデバイスのみ、content-visibility: hidden でパネルを折り畳んでいるときの描画パフォーマンスを上げる

@@ -589,6 +589,10 @@ export default defineComponent({
                 if (document.fullscreenElement) {
                     document.exitFullscreen();
                 }
+                if (this.playerStore.is_pseudo_fullscreen) {
+                    this.playerStore.is_pseudo_fullscreen = false;
+                    this.playerStore.is_fullscreen = false;
+                }
 
                 this.$router.push({path: '/settings/twitter'});
                 return;

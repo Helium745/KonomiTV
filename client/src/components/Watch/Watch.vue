@@ -1,8 +1,10 @@
 <template>
-    <div class="route-container">
+    <div class="route-container" :class="{
+            'route-container--pseudo-fullscreen': playerStore.is_pseudo_fullscreen,
+        }">
         <main class="watch-container" :class="{
                 'watch-container--control-display': playerStore.is_control_display,
-                'watch-container--panel-display': Utils.isSmartphoneVertical() || Utils.isTabletVertical() ? true : playerStore.is_panel_display,
+                'watch-container--panel-display': (Utils.isSmartphoneVertical() || Utils.isTabletVertical()) && !playerStore.is_pseudo_fullscreen ? true : playerStore.is_panel_display,
                 'watch-container--fullscreen': playerStore.is_fullscreen,
                 'watch-container--document-pip': playerStore.is_document_pip,
                 'watch-container--video': playback_mode === 'Video',
@@ -360,6 +362,24 @@ export default defineComponent({
     @include smartphone-horizontal {
         border-bottom: env(safe-area-inset-bottom) solid rgb(var(--v-theme-black));
     }
+
+    // 擬似フルスクリーン表示時 (iPhone Safari など、任意要素への Fullscreen API がサポートされていない環境)
+    // 画面全体を 90度回転させ、物理的には縦画面のまま横向き UI を強制表示する
+    // すでに物理的に横画面になっている場合はこの回転は不要 (通常のスマホ横画面フルスクリーン表示に委ねる)
+    &.route-container--pseudo-fullscreen {
+        @media (orientation: portrait) {
+            position: fixed;
+            top: 0;
+            left: 100dvw;
+            // 上の height: 100dvh !important; を打ち消すため、幅高さの入れ替えには !important が必須
+            width: 100dvh !important;
+            height: 100dvw !important;
+            transform-origin: top left;
+            transform: rotate(90deg);
+            // 回転により Home Indicator の位置が変わるため、余白は付けない
+            border-bottom: none;
+        }
+    }
 }
 
 .watch-container {
@@ -427,6 +447,20 @@ export default defineComponent({
         .watch-panel {
             @media (hover: none) {
                 content-visibility: auto;
+            }
+        }
+    }
+
+    // 擬似フルスクリーン表示時 (物理的には縦画面のまま UI を回転させて横画面表示している場合)
+    // タブレット縦画面・スマホ縦画面向けの「常にパネルを表示する」レイアウトを打ち消し、
+    // スマホ横画面と同様にパネルを右側へはみ出させて開閉できるようにする
+    .route-container--pseudo-fullscreen & {
+        @media (orientation: portrait) {
+            flex-direction: row;
+            width: calc(100% + 310px);  // パネルの幅分はみ出す
+
+            &.watch-container--panel-display {
+                width: 100%;
             }
         }
     }
