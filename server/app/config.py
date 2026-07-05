@@ -325,7 +325,7 @@ class ServerSettings(BaseModel):
 # _CONFIG には直接アクセスせず、Config() 関数を通してアクセスする
 
 _CONFIG: ServerSettings | None = None
-_CONFIG_YAML_PATH = BASE_DIR.parent / 'config.yaml'
+_CONFIG_YAML_PATH = BASE_DIR / 'config.yaml'
 _DOCKER_PATH_PREFIX = '/host-rootfs'
 
 

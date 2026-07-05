@@ -25,7 +25,7 @@ JST = ZoneInfo('Asia/Tokyo')
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # クライアントの静的ファイルがあるディレクトリ
-CLIENT_DIR = BASE_DIR.parent / 'client/dist'
+CLIENT_DIR = BASE_DIR / 'static' / 'frontend'
 
 # データディレクトリ
 DATA_DIR = BASE_DIR / 'data'
