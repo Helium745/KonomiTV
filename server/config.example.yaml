@@ -7,7 +7,7 @@ general:
     # KonomiTV は mirakc 専用です。Mirakurun は録画予約に必要な API を提供していないため使用できません。
     # 一部 Windows 環境では localhost の名前解決が遅いため、ストリーミング開始までの待機時間が長くなる場合があります。
     # mirakc と同じ PC に KonomiTV をインストールしている場合、localhost ではなく 127.0.0.1 の利用を推奨します。
-    mirakc_url: 'http://127.0.0.1:40772/'
+    mirakc_url: 'http://host.docker.internal:40772/'
 
     # 利用するエンコーダー
     # FFmpeg・QSVEncC・NVEncC・VCEEncC・rkmppenc から選択してください。

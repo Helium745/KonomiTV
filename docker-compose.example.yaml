@@ -8,10 +8,13 @@ services:
       context: .
     # OS 起動時にコンテナを自動起動
     restart: always
-    # ネットワークをホスト側と共有する
-    # 標準の bridge モード (仮想ネットワーク) だと、ローカルホストとの通信が面倒
-    # ref: https://inocop.hatenablog.com/entry/2018/12/18/131526
-    network_mode: host
+    # ホスト側とのネットワーク接続を有効化するためのマッピング設定
+    # ref: https://kazuhira-r.hatenablog.com/entry/2022/05/21/152825
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # ポートのマッピング設定
+    ports:
+      - "7000:7000"
     # ボリュームのマウント設定
     # /host-rootfs/ はコンテナ内の KonomiTV からホストマシンのファイルを読み書きするために必要
     volumes:
