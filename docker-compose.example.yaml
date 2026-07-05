@@ -1,5 +1,3 @@
-
-version: '3.9'
 services:
   konomitv:
     image: konomitv
@@ -19,8 +17,8 @@ services:
     # /host-rootfs/ はコンテナ内の KonomiTV からホストマシンのファイルを読み書きするために必要
     volumes:
       - type: bind
-        source: './config.yaml'
-        target: '/code/config.yaml'
+        source: './server/config.yaml'
+        target: '/code/server/config.yaml'
       - type: bind
         source: './server/data/'
         target: '/code/server/data/'

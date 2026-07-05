@@ -4,32 +4,27 @@
 # Docker のマルチステージビルドを使い、最終的な Docker イメージのサイズを抑え、ビルドキャッシュを効かせる
 # --------------------------------------------------------------------------------------------------------------
 
-# 念のため最終イメージに合わせて Ubuntu 22.04 LTS にしておく
-## 中間イメージなので、サイズは（ビルドするマシンのディスク容量以外は）気にしなくて良い
-FROM ubuntu:22.04 AS thirdparty-downloader
-
-# apt-get に対話的に設定確認されないための設定
-ENV DEBIAN_FRONTEND=noninteractive
+FROM alpine AS thirdparty-downloader
 
 # ダウンロード・展開に必要なパッケージのインストール
-RUN apt-get update && apt-get install -y --no-install-recommends aria2 ca-certificates unzip xz-utils
+RUN apk --no-cache add git aria2 unzip tar xz
 
 # サードパーティーライブラリをダウンロード
 ## サードパーティーライブラリは変更が少ないので、先にダウンロード処理を実行してビルドキャッシュを効かせる
 WORKDIR /
 ## リリース版用
-RUN aria2c -x10 https://github.com/tsukumijima/KonomiTV/releases/download/v0.14.1/thirdparty-linux.tar.xz
-RUN tar xvf thirdparty-linux.tar.xz
+# RUN aria2c -x10 https://github.com/tsukumijima/KonomiTV/releases/download/v0.14.1/thirdparty-linux.tar.xz
+# RUN tar xvf thirdparty-linux.tar.xz
 ## 開発版 (0.xx.x-dev) 用
-# RUN aria2c -x10 https://nightly.link/tsukumijima/KonomiTV/actions/runs/27093421017/thirdparty-linux.tar.xz.zip
-# RUN unzip thirdparty-linux.tar.xz.zip && tar xvf thirdparty-linux.tar.xz
+RUN aria2c -x10 https://nightly.link/tsukumijima/KonomiTV/actions/runs/27093421017/thirdparty-linux.tar.xz.zip
+RUN unzip thirdparty-linux.tar.xz.zip && tar xvf thirdparty-linux.tar.xz
 
 # --------------------------------------------------------------------------------------------------------------
 # クライアントをビルドするステージ
 # クライアントのビルド成果物 (dist) は Git に含まれているが、万が一ビルドし忘れたりや開発ブランチでの利便性を考慮してビルドしておく
 # --------------------------------------------------------------------------------------------------------------
 
-FROM node:20.16.0 AS client-builder
+FROM node:20-alpine AS client-builder
 
 # 依存パッケージリスト (package.json/yarn.lock) だけをコピー
 WORKDIR /code/client/
@@ -122,10 +117,7 @@ RUN uv sync --python /code/server/thirdparty/Python/bin/python
 COPY ./server/ /code/server/
 
 # クライアントのビルド成果物 (dist) だけをコピー
-COPY --from=client-builder /code/client/dist/ /code/client/dist/
-
-# config.example.yaml をコピー
-COPY ./config.example.yaml /code/config.example.yaml
+COPY --from=client-builder /code/client/dist/ /code/server/static/frontend/
 
 # KonomiTV サーバーを起動
 ENTRYPOINT ["/code/server/.venv/bin/python", "KonomiTV.py"]
