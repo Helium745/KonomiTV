@@ -62,14 +62,9 @@
 - `app/`: FastAPI アプリケーションコード
   - `routers/`: API ルートハンドラー
     - `ChannelsRouter` (チャンネル) / `ProgramsRouter` (番組) / `VideosRouter` (録画番組) / `SeriesRouter` (シリーズ)
-<<<<<<< HEAD
-    - `LiveStreamsRouter` (ライブ配信) / `VideoStreamsRouter` (録画配信)
-    - `ReservationsRouter` (EDCB 録画予約) / `ReservationConditionsRouter` (EPG 自動予約条件) / `DataBroadcastingRouter` (データ放送のネット接続)
-=======
     - `TimeshiftRouter` (mirakc タイムシフト録画のレコーダー/レコード一覧、および恒久保存 API (`TimeshiftSaveTask` へのジョブ投入・進捗一覧))
     - `LiveStreamsRouter` (ライブ配信) / `VideoStreamsRouter` (録画配信) / `TimeshiftStreamsRouter` (タイムシフト録画配信)
     - `ReservationsRouter` (mirakc 録画予約) / `ReservationConditionsRouter` (EPG 自動予約条件) / `DataBroadcastingRouter` (データ放送のネット接続)
->>>>>>> ca5a50f1 (Docs: ReadmeとAGENTS.mdを更新)
     - `CapturesRouter` (キャプチャ) / `TwitterRouter` (Twitter) / `NiconicoRouter` (ニコニコ実況)
     - `UsersRouter` (ユーザー) / `SettingsRouter` (設定) / `MaintenanceRouter` (メンテ) / `VersionRouter` (バージョン)
   - `models/`: DB モデルとスキーマ
@@ -79,13 +74,11 @@
   - `streams/`: ライブ/オンデマンド ストリーミング実装
     - `LiveEncodingTask` / `VideoEncodingTask` (エンコード・配信タスク) / `LiveStream` / `VideoStream` (状態管理) / `LivePSIDataArchiver` (PSI/SI 抽出・アーカイブ)
   - `metadata/`: 録画番組からのメタデータ抽出・保存
-    - `RecordedScanTask` (録画フォルダ監視・DB 同期) / `MetadataAnalyzer` (メタデータ解析) / `TSInfoAnalyzer` (TS 番組情報解析) / `ThumbnailGenerator` (シークバー用タイル画像+代表サムネ生成) / `CMSectionsDetector` (CM 区間検出)
-<<<<<<< HEAD
-=======
+    - `RecordedScanTask` (録画フォルダ監視・DB 同期) / `MetadataAnalyzer` (メタデータ解析) / `TSInfoAnalyzer` (TS 番組情報解析) / `ThumbnailGenerator` (シークバー用タイル画像+代表サムネ生成) / `CMSectionsDetector` (録画番組の CM 区間検出)
+      - `CMSectionsDetector`: 局ごとの事前ロゴデータ (.lgd) や外部ツール (join_logo_scp 等) に依存せず、FFmpeg + OpenCV のみで完結する純 Python 実装。`.chapter.txt` があれば優先し、無ければ「全編を 2fps でサンプリング → 動画自身のフレームから局ロゴ表示領域を自己学習 (四隅の持続エッジ領域) → 学習した平均勾配テンプレートとのコサイン類似度でフレーム毎の局ロゴ有無を時系列化 → 一定時間窓で平滑化し『ロゴが消え続ける区間 = CM』を抽出 → 区間の端を無音 (ノンモン) 位置にスナップ」して検出する。半透明 faint ロゴでも本編中の一時的なロゴ消失を誤検出しないよう、平滑化 + 最小 CM 長でフィルタするのが要点。CPU-bound のため ProcessPoolExecutor で実行し、対象は MPEG-TS のみ。結果は `RecordedVideo.cm_sections` (None=未解析 / []=解析済み無し / 非空=検出区間) に保存する
   - `tasks/`: シングルトンのバックグラウンドタスク
     - `AutoReservationTask` (mirakc の SSE イベント + 定期スキャンでキーワード自動予約条件と EPG を突き合わせ、マッチした番組を mirakc の録画スケジュールに反映)
     - `TimeshiftSaveTask` (mirakc タイムシフト録画のリングバッファ内容を録画フォルダ配下へ無劣化コピーし恒久保存するジョブキュー。record 1本まるごと保存と、番組をまたぐ絶対時刻範囲の切り出し保存の2種類。書き出したファイルは `RecordedScanTask` が自動検知して DB 登録する)
->>>>>>> ca5a50f1 (Docs: ReadmeとAGENTS.mdを更新)
   - `utils/`:
     - `edcb/` (EDCB 連携クライアント) / `JikkyoClient` (ニコニコ実況・NX-Jikkyo) / `TwitterGraphQLAPI` (リバエン Twitter クライアント) / `TSInformation` (MPEG2-TS 情報取得)
     - `OAuthCallbackResponse` (OAuth コールバック用特殊レスポンス) / `DriveIOLimiter` (ドライブ別同時実行制限) / `ProcessLimiter` (プロセス別同時実行制限)
