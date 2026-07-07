@@ -260,21 +260,21 @@ async def BackgroundAnalysisAPI():
                 # CM 区間検出とサムネイル生成を同時に実行
                 tasks: list[Coroutine[Any, Any, None]] = []
 
-                # CM 区間情報が未解析の場合、タスクに追加
+                # CM 区間情報が未解析かどうか
                 ## cm_sections が [] の時は「解析はしたが CM 区間がなかった/検出に失敗した」ことを表している
                 ## CM 区間解析はかなり計算コストが高い処理のため、一度解析に失敗した録画ファイルは再解析しない
-                if video_row['cm_sections'] is None:
-                    tasks.append(CMSectionsDetector(
-                        file_path = anyio.Path(video_row['file_path']),
-                        duration_sec = video_row['duration'],
-                    ).detectAndSave())
+                needs_cm_detection = video_row['cm_sections'] is None
 
-                # サムネイルが未生成の場合、タスクに追加
+                # サムネイルが未生成かどうか
                 # どちらか片方だけがないパターンも考えられるので、その場合もサムネイル生成を実行する
                 thumbnail_tile_path = anyio.Path(str(THUMBNAILS_DIR)) / f'{video_row["file_hash"]}_tile.webp'
                 thumbnail_path = anyio.Path(str(THUMBNAILS_DIR)) / f'{video_row["file_hash"]}.webp'
-                if (not await thumbnail_tile_path.is_file()) or (not await thumbnail_path.is_file()):
-                    # 録画番組情報を取得
+                needs_thumbnail = (not await thumbnail_tile_path.is_file()) or (not await thumbnail_path.is_file())
+
+                # CM 区間検出・サムネイル生成のどちらかが必要な場合、録画番組情報を取得する
+                ## CM 区間検出には service_id / container_format が、サムネイル生成には録画番組情報全体が必要
+                recorded_program = None
+                if needs_cm_detection or needs_thumbnail:
                     db_recorded_program = await RecordedProgram.all() \
                         .select_related('recorded_video') \
                         .select_related('channel') \
@@ -282,7 +282,19 @@ async def BackgroundAnalysisAPI():
                     if db_recorded_program is not None:
                         # RecordedProgram モデルを schemas.RecordedProgram に変換
                         recorded_program = schemas.RecordedProgram.model_validate(db_recorded_program, from_attributes=True)
-                        tasks.append(ThumbnailGenerator.fromRecordedProgram(recorded_program).generateAndSave())
+
+                # CM 区間情報が未解析の場合、タスクに追加
+                if needs_cm_detection and recorded_program is not None:
+                    tasks.append(CMSectionsDetector(
+                        file_path = anyio.Path(video_row['file_path']),
+                        duration_sec = video_row['duration'],
+                        service_id = recorded_program.channel.service_id if recorded_program.channel is not None else None,
+                        container_format = recorded_program.recorded_video.container_format,
+                    ).detectAndSave())
+
+                # サムネイルが未生成の場合、タスクに追加
+                if needs_thumbnail and recorded_program is not None:
+                    tasks.append(ThumbnailGenerator.fromRecordedProgram(recorded_program).generateAndSave())
 
                 # タスクが存在する場合、同時実行
                 if tasks:

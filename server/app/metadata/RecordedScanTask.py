@@ -1008,7 +1008,12 @@ class RecordedScanTask:
                 async with DriveIOLimiter.getSemaphore(file_path):
                     await asyncio.gather(
                         # 録画ファイルの CM 区間を検出し DB に保存
-                        CMSectionsDetector(file_path, recorded_program.recorded_video.duration).detectAndSave(),
+                        CMSectionsDetector(
+                            file_path = file_path,
+                            duration_sec = recorded_program.recorded_video.duration,
+                            service_id = recorded_program.channel.service_id if recorded_program.channel is not None else None,
+                            container_format = recorded_program.recorded_video.container_format,
+                        ).detectAndSave(),
                         # シークバー用サムネイルとリスト表示用の代表サムネイルの両方を生成
                         ThumbnailGenerator.fromRecordedProgram(recorded_program).generateAndSave(),
                     )
