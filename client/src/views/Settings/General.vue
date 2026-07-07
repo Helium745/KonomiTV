@@ -107,6 +107,16 @@
                     v-model="settingsStore.settings.show_original_broadcast_time_during_playback">
                 </v-switch>
             </div>
+            <div class="settings__item settings__item--switch">
+                <label class="settings__item-heading" for="auto_skip_cm_sections">録画番組の再生中に CM 区間を自動的にスキップする</label>
+                <label class="settings__item-label" for="auto_skip_cm_sections">
+                    オンにすると、CM 区間が検出されている録画番組の再生中、CM 区間に差し掛かった際に自動で本編の再開位置までスキップします。デフォルトはオフです。<br>
+                    オフのときは、CM 区間に差し掛かるとプレイヤー上に「本編にスキップ」ボタンが表示され、手動でスキップできます。<br>
+                </label>
+                <v-switch class="settings__item-switch" color="primary" id="auto_skip_cm_sections" hide-details
+                    v-model="settingsStore.settings.auto_skip_cm_sections">
+                </v-switch>
+            </div>
             <v-divider class="mt-6"></v-divider>
             <div class="settings__item">
                 <div class="settings__item-heading">デフォルトのパネルの表示状態</div>

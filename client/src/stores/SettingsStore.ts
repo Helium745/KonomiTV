@@ -80,6 +80,7 @@ export interface ILocalClientSettings extends IClientSettings {
     tv_channel_selection_requires_alt_key: boolean;
     use_28hour_clock: boolean;
     show_original_broadcast_time_during_playback: boolean;
+    auto_skip_cm_sections: boolean;
     panel_display_state: 'RestorePreviousState' | 'AlwaysDisplay' | 'AlwaysFold';
     tv_panel_active_tab: 'Program' | 'Channel' | 'Comment' | 'Twitter';
     video_panel_active_tab: 'RecordedProgram' | 'Series' | 'Comment' | 'Twitter';
@@ -228,6 +229,8 @@ export const ILocalClientSettingsDefault: ILocalClientSettings = {
     use_28hour_clock: false,
     // 録画番組の再生中に元の放送時刻を表示する (Default: オフ)
     show_original_broadcast_time_during_playback: false,
+    // 録画番組の再生中に CM 区間を自動的にスキップする (Default: オフ)
+    auto_skip_cm_sections: false,
     // デフォルトのパネルの表示状態 (Default: 前回の状態を復元する)
     panel_display_state: 'RestorePreviousState',
     // テレビをみるときにデフォルトで表示されるパネルのタブ (Default: 番組情報タブ)
@@ -391,6 +394,7 @@ export const SYNCABLE_SETTINGS_KEYS: (keyof IClientSettings)[] = [
     'tv_channel_selection_requires_alt_key',
     'use_28hour_clock',
     'show_original_broadcast_time_during_playback',
+    'auto_skip_cm_sections',
     'panel_display_state',
     'tv_panel_active_tab',
     'video_panel_active_tab',

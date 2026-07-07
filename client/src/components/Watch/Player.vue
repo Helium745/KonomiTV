@@ -42,6 +42,14 @@
                 <Icon class="switch-button-icon" icon="fluent:ios-arrow-right-24-filled" width="33px" style="transform: rotate(90deg)" />
             </div>
         </div>
+        <div v-ripple class="watch-player__cm-skip-button"
+                v-if="playback_mode === 'Video'"
+                :class="{'watch-player__cm-skip-button--display':
+                    playerStore.active_cm_section !== null && settingsStore.settings.auto_skip_cm_sections === false}"
+                @click="playerStore.active_cm_section && playerStore.event_emitter.emit('SeekRequest', {playback_position: playerStore.active_cm_section.end_time})">
+            <Icon class="watch-player__cm-skip-button-icon" icon="fluent:fast-forward-20-filled" width="20px" />
+            <span class="watch-player__cm-skip-button-text">本編にスキップ</span>
+        </div>
     </div>
 </template>
 <script setup lang="ts">
@@ -737,6 +745,66 @@ _::-webkit-full-page-media, _:future, :root .dplayer-subtitle-icon[aria-label='�
             &-down > .switch-button-icon {
                 bottom: 4px;
             }
+        }
+    }
+
+    .watch-player__cm-skip-button {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        position: absolute;
+        right: 28px;
+        bottom: 92px;
+        padding: 10px 18px;
+        color: rgb(var(--v-theme-text));
+        background: #2F221FC0;
+        border-radius: 7px;
+        font-size: 14.5px;
+        font-weight: bold;
+        user-select: none;
+        cursor: pointer;
+        opacity: 0;
+        visibility: hidden;
+        transition: opacity 0.3s, visibility 0.3s, background-color 0.15s;
+        z-index: 5;
+
+        &--display {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        &:hover {
+            background: #2F221FF0;
+        }
+        // タッチデバイスで hover を無効にする
+        @media (hover: none) {
+            &:hover {
+                background: #2F221FC0;
+            }
+        }
+
+        // Document Picture-in-Picture ウインドウでは非表示
+        @media all and (display-mode: picture-in-picture) {
+            display: none;
+        }
+
+        @include tablet-vertical {
+            right: 15px;
+            bottom: 76px;
+            padding: 8px 14px;
+            font-size: 13px;
+        }
+        @include smartphone-horizontal {
+            right: 15px;
+            bottom: 66px;
+            padding: 7px 12px;
+            font-size: 12.5px;
+        }
+        @include smartphone-vertical {
+            right: 15px;
+            bottom: 60px;
+            padding: 7px 12px;
+            font-size: 12.5px;
         }
     }
 }

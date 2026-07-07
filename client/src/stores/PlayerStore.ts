@@ -4,7 +4,7 @@ import { defineStore } from 'pinia';
 
 import { ITweetCapture } from '@/components/Watch/Panel/Twitter.vue';
 import { ICommentData } from '@/services/player/managers/LiveCommentManager';
-import { IRecordedProgram, IRecordedProgramDefault } from '@/services/Videos';
+import { ICMSection, IRecordedProgram, IRecordedProgramDefault } from '@/services/Videos';
 import useSettingsStore from '@/stores/SettingsStore';
 
 
@@ -84,6 +84,10 @@ const usePlayerStore = defineStore('player', {
         // 通常の録画番組視聴時は null 、タイムシフト録画視聴時のみ非 null になる
         // このフィールドが非 null のとき、recorded_program.id は録画番組の DB 上の ID ではなく mirakc 上の record ID を表す
         timeshift_recorder_id: null as string | null,
+
+        // ビデオ視聴: 現在の再生位置が含まれる CM 区間
+        // 現在の再生位置がどの CM 区間にも含まれていない場合は null になる
+        active_cm_section: null as ICMSection | null,
 
         // 仮想キーボードが表示されているか
         // 既定で表示されていない想定
@@ -223,6 +227,7 @@ const usePlayerStore = defineStore('player', {
             this.is_player_initialized = false;
             this.recorded_program = structuredClone(IRecordedProgramDefault);
             this.timeshift_recorder_id = null;
+            this.active_cm_section = null;
             this.is_virtual_keyboard_display = false;
             this.is_fullscreen = false;
             this.is_pseudo_fullscreen = false;

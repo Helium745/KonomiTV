@@ -9,6 +9,12 @@ export type SortOrder = 'desc' | 'asc';
 /** マイリストのソート順序を表す型 */
 export type MylistSortOrder = 'mylist_added_desc' | 'mylist_added_asc' | 'recorded_desc' | 'recorded_asc';
 
+/** CM 区間情報を表すインターフェース */
+export interface ICMSection {
+    start_time: number;
+    end_time: number;
+}
+
 /** 録画ファイル情報を表すインターフェース */
 export interface IRecordedVideo {
     id: number;
@@ -35,7 +41,7 @@ export interface IRecordedVideo {
     secondary_audio_codec: 'AAC-LC' | null;
     secondary_audio_channel: 'Monaural' | 'Stereo' | '5.1ch' | null;
     secondary_audio_sampling_rate: number | null;
-    cm_sections: { start_time: number; end_time: number; }[] | null;
+    cm_sections: ICMSection[] | null;
     thumbnail_info: IThumbnailInfo | null;
     created_at: string;
     updated_at: string;

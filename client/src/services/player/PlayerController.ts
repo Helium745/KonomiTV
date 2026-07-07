@@ -16,7 +16,7 @@ import LiveDataBroadcastingManager from '@/services/player/managers/LiveDataBroa
 import LiveEventManager from '@/services/player/managers/LiveEventManager';
 import MediaSessionManager from '@/services/player/managers/MediaSessionManager';
 import PlayerManager from '@/services/player/PlayerManager';
-import Videos from '@/services/Videos';
+import Videos, { ICMSection } from '@/services/Videos';
 import useChannelsStore from '@/stores/ChannelsStore';
 import usePlayerStore from '@/stores/PlayerStore';
 import useSettingsStore, { LiveStreamingQuality, LIVE_STREAMING_QUALITIES, VideoStreamingQuality, VIDEO_STREAMING_QUALITIES } from '@/stores/SettingsStore';
@@ -100,6 +100,11 @@ class PlayerController {
     // ライブ再生開始時の一時ミュートを、保存済みミュートと区別するフラグ
     // 一時ミュートで発火した volumechange を、ユーザー操作として保存しないために使う
     private is_live_startup_temporary_muted = false;
+
+    // ビデオ視聴: 自動 CM スキップで直近にスキップした CM 区間
+    // 同じ区間を連続でスキップし続けないための重複実行防止に使う
+    // 現在の再生位置がどの CM 区間にも含まれなくなったら null に戻す
+    private last_auto_skipped_cm_section: ICMSection | null = null;
 
 
     /**
@@ -1520,9 +1525,13 @@ class PlayerController {
                 if (!this.player || !this.player.video) {
                     return;
                 }
+                const current_time = this.player.video.currentTime;
                 player_store.event_emitter.emit('PlaybackPositionChanged', {
-                    playback_position: this.player.video.currentTime,
+                    playback_position: current_time,
                 });
+
+                // 現在の再生位置が含まれる CM 区間を判定し、手動スキップボタンの表示や自動スキップに利用する
+                this.updateActiveCMSection(current_time);
             });
 
             // 視聴履歴の更新処理
@@ -1977,6 +1986,50 @@ class PlayerController {
         // 要素の監視を開始
         this.player_container_resize_observer = new ResizeObserver(resize_handler);
         this.player_container_resize_observer.observe(player_container_element);
+    }
+
+
+    /**
+     * ビデオ視聴: 現在の再生位置が含まれる CM 区間を判定し、PlayerStore.active_cm_section を更新する
+     * また、CM 自動スキップ設定が有効な場合、CM 区間に入った瞬間に一度だけ本編再開位置まで自動シークする
+     * @param current_time 現在の再生位置 (秒)
+     */
+    private updateActiveCMSection(current_time: number): void {
+        const player_store = usePlayerStore();
+        const settings_store = useSettingsStore();
+
+        const cm_sections = player_store.recorded_program.recorded_video.cm_sections;
+        const active_cm_section = (cm_sections ?? []).find(
+            (section) => current_time >= section.start_time && current_time < section.end_time,
+        ) ?? null;
+
+        // UI (手動スキップボタンなど) が参照する現在の CM 区間を更新する
+        // 毎フレーム代入すると不要な再描画が発生するため、値が変わったときだけ更新する
+        if (player_store.active_cm_section !== active_cm_section) {
+            player_store.active_cm_section = active_cm_section;
+        }
+
+        // CM 区間の外に出たら、次に別の CM 区間に入ったときに再度自動スキップできるようにリセットする
+        if (active_cm_section === null) {
+            this.last_auto_skipped_cm_section = null;
+            return;
+        }
+
+        // CM 自動スキップ設定が無効な場合は手動スキップボタンの表示のみ行い、自動シークはしない
+        if (settings_store.settings.auto_skip_cm_sections !== true) {
+            return;
+        }
+
+        // すでにこの CM 区間を自動スキップ済みなら何もしない (毎フレーム実行されるため重複実行防止が必須)
+        if (this.last_auto_skipped_cm_section === active_cm_section) {
+            return;
+        }
+        this.last_auto_skipped_cm_section = active_cm_section;
+
+        if (this.player === null) return;
+        this.player.seek(active_cm_section.end_time);
+        this.player.play();
+        this.player.notice('CM 区間をスキップしました。', undefined, undefined, undefined);
     }
 
 
